@@ -204,6 +204,7 @@ class FileSystem(ABC):
 
 
 class FileItem(ABC):
+    pass
 
 
 class HTTPFileSystem(FileSystem):
@@ -295,6 +296,7 @@ class INPEStructure:
     def years(self):
         """Docstring"""
         return [f for f in self.filesystem.folders if is_valid_year(f.name[:-1])]
+
 
 class INPEHTTPFileSystem:
     """Docstring"""
