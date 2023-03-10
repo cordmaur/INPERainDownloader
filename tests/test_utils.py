@@ -1,7 +1,6 @@
 """
 Tests
 """
-
 from pathlib import Path
 from datetime import datetime
 from socket import gaierror
@@ -14,7 +13,7 @@ from raindownloader.inpe import INPE
 class TestFTPUtil:
     """Test the FTPUtil class"""
 
-    @pytest.fixture(scope="function")
+    @pytest.fixture(scope="session")
     def fixture_data(self):
         """Return the test data for the tests"""
         data = {
