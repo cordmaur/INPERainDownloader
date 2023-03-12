@@ -17,7 +17,7 @@ from .inpe import INPE
 
 
 class INPEDownloader:
-    """Docstring"""
+    """Business logic to download files from INPE structure"""
 
     def __init__(
         self,
@@ -82,7 +82,7 @@ class INPEDownloader:
         print(local_info)
 
     def remote_file_path(self, date_str: str) -> str:
-        """Docstring"""
+        """Create the remote file path given a date"""
         filename = self.filename_fn(date_str)
         folder = self.structure_fn(date_str)
 
