@@ -44,7 +44,7 @@ class INPEDownloader:
         # save the precipitation raster
         filename = Path(grib_file).with_suffix(FileType.GEOTIFF.value)
 
-        grib["prec"].rio.to_raster(filename)
+        grib["prec"].rio.to_raster(filename, compress="deflate")
 
         return filename
 
@@ -58,6 +58,11 @@ class INPEDownloader:
         local_file = self.local_file_path(
             date_str, local_folder, file_type=FileType.GRIB
         )
+
+        # if the file does not exist, exit with false
+        if not local_file.exists():
+            return False
+
         local_info = OSUtil.get_local_file_info(local_file)
 
         # first, check the names

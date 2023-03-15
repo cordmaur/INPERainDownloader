@@ -25,7 +25,7 @@ class TestDownloader:
     def fixture_data(self):
         """Return the test data for the tests"""
         data = {
-            "test_dir": "./tmp",
+            "test_dir": "./tests/data",
             "test_date": "2023-03-01",
             "end_date": "2023-03-03",
             "correct_structure": "2023/03",
@@ -39,20 +39,17 @@ class TestDownloader:
         """Test the initialization of the class"""
 
         # create a downloader
-
         assert isinstance(self.downloader, INPEDownloader)
 
-    def test_grib2tiff(self):
-        """docstring"""
-        pass
+    def test_is_downloaded(self, fixture_data):
+        """Test if a specific date is already downloaded and updated"""
 
-    def test_is_downloaded(self):
-        """docstring"""
-        pass
-
-    def test_compare_files(self):
-        """docstring"""
-        pass
+        test_dates = [fixture_data["test_date"], fixture_data["end_date"], "20230302"]
+        results = [True, False, False]
+        for date, result in zip(test_dates, results):
+            assert (
+                self.downloader.is_downloaded(date, fixture_data["test_dir"]) == result
+            )
 
     def test_remote_file_path(self, fixture_data):
         """Test if remote file path is being created correctly"""
@@ -133,9 +130,9 @@ class TestDownloader:
         """
 
         # to test this function we are going to pass a known number of dates to be downloaded
-        # one of the dates will not be existent, so it will have to skip correctly
+        # one of the dates will not be existent, so it will have to skip it correctly
 
-        def download_mock_logic(*args, **kwargs):
+        def download_mock_logic(**kwargs):
             return self.downloader.local_file_path(
                 date_str=kwargs["date_str"], local_folder=fixture_data["test_dir"]
             )
@@ -149,11 +146,18 @@ class TestDownloader:
                 start_date=fixture_data["test_date"], end_date=fixture_data["end_date"]
             )
 
+            # inject a wrong date
+            dates.append("a010101")
+
             files = self.downloader.download_files(
                 dates=dates, local_folder=fixture_data["test_dir"]
             )
 
             assert len(files) == len(dates)
+
+            # the last file should be an error message
+            assert str(files.pop()).startswith("Error ")
+
             for file in files:
                 assert isinstance(file, Path)
 
@@ -162,4 +166,6 @@ class TestDownloader:
         Test just the overall logic of download_range method, without actually
         downloading the files.
         """
-        pass
+
+    def test_grib2tiff(self):
+        """docstring"""
