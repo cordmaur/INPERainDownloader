@@ -4,9 +4,9 @@ Module with specialized classes to understand the INPE FTP Structure
 import os
 
 # from abc import ABC, abstractmethod
-
+from pathlib import Path
+from typing import Union
 from dateutil import parser
-
 from .utils import DateProcessor
 
 
@@ -33,3 +33,22 @@ class INPE:
         date = DateProcessor.normalize_date(date_str)
         filename = f"MERGE_CPTEC_{date}.grib2"
         return filename
+
+    @staticmethod
+    def parse_MERGE_filename(
+        filename: Union[str, Path]
+    ):  # pylint: disable=invalid-name
+        """
+        Given filename (or full path) in the MERGE/INPE format,
+        return a dictionary with the date
+        """
+
+        # convert to Path
+        file = Path(filename)
+
+        # get the name
+        name = file.stem
+
+        date_str = name.split("_")[-1]
+
+        return {"date": parser.parse(date_str)}

@@ -4,7 +4,7 @@ Module with specialized classes to understand the INPE FTP Structure
 import ftplib
 import os
 from pathlib import Path
-from typing import Union, List
+from typing import Union, List, Callable, Optional
 
 # from abc import ABC, abstractmethod
 from datetime import timedelta, datetime
@@ -92,6 +92,22 @@ class INPEDownloader:
         folder = self.structure_fn(date_str)
 
         return "/".join([self.root, folder, filename])
+
+    def remote_file_exists(self, date_str: str) -> bool:
+        """Docstring"""
+
+        remote_path = self.remote_file_path(date_str)
+        try:
+            self.ftp.ftp.size(remote_path)
+
+        except ftplib.error_perm as error:
+            if str(error).startswith("550"):
+                print("File does not exists")
+            else:
+                print(f"Error checking file existence: {error}")
+            return False
+
+        return True
 
     def local_file_path(
         self,
@@ -224,18 +240,39 @@ class INPEDownloader:
             start_date=first_str, end_date=now_str, local_folder=local_folder
         )
 
-    def remote_file_exists(self, date_str: str) -> bool:
-        """Docstring"""
+    @staticmethod
+    def create_cube(
+        files: List,
+        name_parser: Optional[Callable] = None,
+        dim_key: Optional[str] = None,
+        squeeze_dims: Optional[Union[List[str], str]] = None,
+    ) -> xr.Dataset:
+        """
+        Stack the images in the list as one XARRAY cube.
+        The stacked dimension can be obtained from the filename, by a parser that
+        returns an dictionary and the name of the dimension key (returned by the dictionary)
+        """
 
-        remote_path = self.remote_file_path(date_str)
-        try:
-            self.ftp.ftp.size(remote_path)
+        # first, check if name parser and dimension key are setted correctly
+        if (name_parser is None) ^ (dim_key is None):
+            raise ValueError("If name parser or dim key is set, both must be setted.")
 
-        except ftplib.error_perm as error:
-            if str(error).startswith("550"):
-                print("File does not exists")
-            else:
-                print(f"Error checking file existence: {error}")
-            return False
+        # set the stacked dimension name
+        dim = "time" if dim_key is None else dim_key
 
-        return True
+        # create a cube with the files
+        data_arrays = [xr.open_dataset(file) for file in files]
+        cube = xr.concat(data_arrays, dim=dim)
+
+        # set the new dimension correctly
+        if name_parser is not None:
+            # create the new coordinates based on the parser
+            coords = [name_parser(file)[dim_key] for file in files]
+            cube = cube.assign_coords({dim: coords})
+        else:
+            cube = cube.assign_coords({dim: cube[dim]})
+
+        if squeeze_dims is not None:
+            cube = cube.squeeze(dim=squeeze_dims)
+
+        return cube
