@@ -28,7 +28,7 @@ class INPEDownloader:
     ) -> None:
 
         self.ftp = FTPUtil(server)
-        self.root = os.path.normpath(root)
+        self.root = Path(root).as_posix()
         self.filename_fn = filename_fn
         self.structure_fn = structure_fn
 
@@ -39,7 +39,7 @@ class INPEDownloader:
 
         # tosdo: write the correct function for longitude
         grib = grib.assign_coords(longitude=grib.longitude - 360)
-        grib = grib.rio.write_crs(rio.CRS.from_epsg(4326))
+        grib = grib.rio.write_crs(rio.crs.CRS.from_epsg(4326))
 
         # save the precipitation raster
         filename = Path(grib_file).with_suffix(FileType.GEOTIFF.value)
@@ -187,6 +187,11 @@ class INPEDownloader:
         Download files from a list of dates and receives a list pointing to the files.
         If there is a problem during the download of one file, a message error will be in the list.
         """
+
+        # before downloading the files, check if the local folder exists
+        if not Path(local_folder).exists():
+            raise FileNotFoundError(f"Folder not found: {local_folder}")
+
         files = []
         for date in dates:
             try:
@@ -261,7 +266,7 @@ class INPEDownloader:
         dim = "time" if dim_key is None else dim_key
 
         # create a cube with the files
-        data_arrays = [xr.open_dataset(file) for file in files]
+        data_arrays = [xr.open_dataset(file) for file in files if Path(file).exists()]
         cube = xr.concat(data_arrays, dim=dim)
 
         # set the new dimension correctly
