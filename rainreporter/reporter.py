@@ -3,10 +3,10 @@ Main module for the reporter class
 """
 from pathlib import Path
 from typing import Union
-import tempfile
 
 import geopandas as gpd
 import contextily as cx
+import rasterio as rio
 
 from raindownloader.inpedownloader import INPEDownloader
 from raindownloader.inpe import INPE
@@ -82,9 +82,9 @@ class RainReporter:
         # convert the shapefile to the raster CRS (more cost effective)
         shp.to_crs(rain.rio.crs, inplace=True)
 
-        # to use contextily, we need to save the raster to disk (unfortunately)
-        # for that, we will create a tempfile and delete it just after
-        tmpfile = tempfile.NamedTemporaryFile(suffix=".tif")
+        # to use contextily, we will write the raster to a MemoryFile
+        # so we don't need to write it to disk and reload it
+
         # rain.
 
         # plot rain inside shape
