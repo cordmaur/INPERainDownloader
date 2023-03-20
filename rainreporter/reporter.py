@@ -10,7 +10,7 @@ import rasterio as rio
 
 from raindownloader.inpedownloader import INPEDownloader
 from raindownloader.inpe import INPE
-from raindownloader.utils import FileType
+from raindownloader.utils import FileType, GISUtil
 
 
 class RainReporter:
@@ -19,24 +19,28 @@ class RainReporter:
     def __init__(
         self,
         server: str,
-        root: str,
+        remote_folder: str,
+        download_folder: Union[Path, str],
         filename_fn=INPE.MERGE_filename,
         structure_fn=INPE.MERGE_structure,
     ):
         self.downloader = INPEDownloader(
-            server=server, root=root, filename_fn=filename_fn, structure_fn=structure_fn
+            server=server,
+            root=remote_folder,
+            filename_fn=filename_fn,
+            structure_fn=structure_fn,
         )
 
-    def accum_rain(
-        self, start_date: str, end_date: str, download_folder: Union[str, Path]
-    ):
+        self.download_folder = Path(download_folder)
+
+    def accum_rain(self, start_date: str, end_date: str):
         """Get the accumulated rain in a given period"""
 
         # download the files
         files = self.downloader.download_range(
             start_date=start_date,
             end_date=end_date,
-            local_folder=download_folder,
+            local_folder=self.download_folder,
             file_type=FileType.GEOTIFF,
         )
 
@@ -58,7 +62,6 @@ class RainReporter:
         start_date: str,
         end_date: str,
         shapefile: Union[str, Path],
-        download_folder: Union[str, Path],
     ):
         """
         Given a time period and a shapefile, plot the rain within the shape
@@ -66,7 +69,8 @@ class RainReporter:
 
         # first, let's grab the rain
         rain = self.accum_rain(
-            start_date=start_date, end_date=end_date, download_folder=download_folder
+            start_date=start_date,
+            end_date=end_date,
         )
 
         # then, open the shapefile
@@ -84,10 +88,22 @@ class RainReporter:
 
         # to use contextily, we will write the raster to a MemoryFile
         # so we don't need to write it to disk and reload it
+        # first we will create a profile
+        array = rain.to_array()
+        profile = GISUtil.profile_from_xarray(array)
 
-        # rain.
+        plt_ax = shp.plot(figsize=(5, 5), alpha=0.5, edgecolor="k")
+
+        # create a memory file and use it to create a memory dataset
+        with rio.MemoryFile() as memfile:
+            with memfile.open(**profile) as memdset:
+
+                # write the data to the newly created dataset
+                memdset.write(array)
+
+            # with the dataset in memory, add the basemap
+            cx.add_basemap(plt_ax, source=memfile)
 
         # plot rain inside shape
-        ax = shp.plot(figsize=(5, 5), alpha=0.5, edgecolor="k")
 
         # cx.add_basemap(ax, source='../tmp/output_raster.tif', crs=chuva.crs, reset_extent=True, vmin=0, vmax=1)

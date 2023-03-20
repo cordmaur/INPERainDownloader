@@ -33,13 +33,21 @@ class INPEDownloader:
         self.structure_fn = structure_fn
 
     @staticmethod
-    def grib2tif(grib_file: Union[str, Path]) -> Path:
-        """Converts a GRIB2 file to GeoTiff and set correct CRS and Longitude"""
+    def grib2tif(grib_file: Union[str, Path], epsg: int = 4326) -> Path:
+        """
+        Converts a GRIB2 file to GeoTiff and set correct CRS and Longitude
+        """
         grib = xr.open_dataset(grib_file)
 
         # tosdo: write the correct function for longitude
         grib = grib.assign_coords(longitude=grib.longitude - 360)
-        grib = grib.rio.write_crs(rio.crs.CRS.from_epsg(4326))
+
+        # now write the crs to the dataset
+        # if "crs" in dir(rio):
+        #     grib = grib.rio.write_crs(rio.crs.CRS.from_epsg(crs))
+
+        # else:
+        grib = grib.rio.write_crs(rio.CRS.from_epsg(epsg))  # pylint: disable=E1101
 
         # save the precipitation raster
         filename = Path(grib_file).with_suffix(FileType.GEOTIFF.value)
@@ -194,18 +202,18 @@ class INPEDownloader:
 
         files = []
         for date in dates:
-            try:
-                files.append(
-                    self.download_file(
-                        date_str=date,
-                        local_folder=local_folder,
-                        file_type=file_type,
-                        force=force,
-                    )
+            # try:
+            files.append(
+                self.download_file(
+                    date_str=date,
+                    local_folder=local_folder,
+                    file_type=file_type,
+                    force=force,
                 )
+            )
 
-            except Exception as error:  # pylint:disable=broad-except
-                files.append(f"Error {date}:  {error}")
+            # except Exception as error:  # pylint:disable=broad-except
+            #     files.append(f"Error {date}:  {error}")
 
         return files
 

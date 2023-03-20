@@ -18,6 +18,8 @@ from datetime import timedelta, datetime
 from dateutil import parser
 import pytz
 
+import xarray as xr
+
 
 class FileType(Enum):
     """Specifies the file types for downloading"""
@@ -131,6 +133,26 @@ class FTPUtil:
     def __repr__(self) -> str:
         output = f"FTP {'' if self.is_connected else 'Not '}connected to server {self.ftp.host}"
         return output
+
+
+class GISUtil:
+    """Helper class for basic GIS operations"""
+
+    @staticmethod
+    def profile_from_xarray(array: xr.DataArray, driver: Optional[str] = "GTiff"):
+        """Create a rasterio profile given an rioxarray"""
+        profile = dict(
+            driver=driver,
+            width=array.rio.width,
+            height=array.rio.height,
+            count=array.rio.count,
+            dtype=array.dtype,
+            crs=array.rio.crs,
+            transform=array.rio.transform(),
+            nodata=array.rio.nodata,
+        )
+
+        return profile
 
 
 class OSUtil:
