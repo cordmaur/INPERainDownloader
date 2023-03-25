@@ -1,0 +1,7 @@
+shapely
+fiona
+pyproj
+geopandas
+rioxarray
+pystac-client
+matplotlib
