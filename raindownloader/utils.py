@@ -191,6 +191,14 @@ class DateProcessor:
         return date.strftime("%Y%m%d")
 
     @staticmethod
+    def pretty_date(date: Union[str, datetime]) -> str:
+        """Return the date in a pretty printable format dd/mm/yyyy"""
+        if not isinstance(date, datetime):
+            date = parser.parse(date)
+
+        return date.strftime("%d-%m-%Y")
+
+    @staticmethod
     def dates_range(start_date: str, end_date: str) -> List[str]:
         """Spawn a dates list in normalized format in the desired range"""
 

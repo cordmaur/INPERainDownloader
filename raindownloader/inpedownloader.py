@@ -10,6 +10,7 @@ from typing import Union, List, Callable, Optional
 from datetime import timedelta, datetime
 
 import xarray as xr
+import rioxarray as xrio
 import rasterio as rio
 
 from .utils import DateProcessor, FTPUtil, OSUtil, FileType
@@ -37,17 +38,26 @@ class INPEDownloader:
         """
         Converts a GRIB2 file to GeoTiff and set correct CRS and Longitude
         """
-        grib = xr.open_dataset(grib_file)
+        grib = xrio.open_rasterio(grib_file)  # type: ignore[no-unsized-index]
 
-        # tosdo: write the correct function for longitude
-        grib = grib.assign_coords(longitude=grib.longitude - 360)
+        grib = grib.rio.write_crs(rio.CRS.from_epsg(epsg))  # type: ignore[attr]
 
-        # now write the crs to the dataset
-        # if "crs" in dir(rio):
-        #     grib = grib.rio.write_crs(rio.crs.CRS.from_epsg(crs))
+        # save the precipitation raster
+        filename = Path(grib_file).with_suffix(FileType.GEOTIFF.value)
+
+        grib[0].rio.to_raster(filename, compress="deflate")
+
+        return filename
+
+    @staticmethod
+    def grib2tif_old(grib_file: Union[str, Path], epsg: int = 4326) -> Path:
+        """
+        Converts a GRIB2 file to GeoTiff and set correct CRS and Longitude
+        """
+        grib = xrio.open_rasterio(grib_file)  # type: ignore[no-unsized-index]
 
         # else:
-        grib = grib.rio.write_crs(rio.CRS.from_epsg(epsg))  # pylint: disable=E1101
+        grib = grib.rio.write_crs(rio.CRS.from_epsg(epsg))  # type: ignore[attr]
 
         # save the precipitation raster
         filename = Path(grib_file).with_suffix(FileType.GEOTIFF.value)
@@ -56,7 +66,9 @@ class INPEDownloader:
 
         return filename
 
-    def is_downloaded(self, date_str: str, local_folder: Union[str, Path]) -> bool:
+    def is_downloaded(
+        self, date_str: str, local_folder: Union[str, Path], check_for_update=False
+    ) -> bool:
         """Compare remote and local files and return if they are equal"""
         # create a string pointing to the remote file and get its info
         remote_file = self.remote_file_path(date_str)
@@ -71,18 +83,21 @@ class INPEDownloader:
         if not local_file.exists():
             return False
 
-        local_info = OSUtil.get_local_file_info(local_file)
+        if check_for_update:
+            local_info = OSUtil.get_local_file_info(local_file)
 
-        # first, check the names
-        if os.path.basename(remote_file) != os.path.basename(local_file):
-            return False
+            # first, check the names
+            if os.path.basename(remote_file) != os.path.basename(local_file):
+                return False
 
-        remote_info = self.ftp.get_ftp_file_info(remote_file=remote_file)
-        local_info = OSUtil.get_local_file_info(local_file)
+            remote_info = self.ftp.get_ftp_file_info(remote_file=remote_file)
+            local_info = OSUtil.get_local_file_info(local_file)
 
-        return (remote_info["size"] == local_info["size"]) and (
-            remote_info["datetime"] == local_info["datetime"]
-        )
+            return (remote_info["size"] == local_info["size"]) and (
+                remote_info["datetime"] == local_info["datetime"]
+            )
+        else:
+            return True
 
     def compare_files(self, date_str: str, local_folder: Union[str, Path]) -> None:
         """Compare remote and local files visually"""
@@ -163,9 +178,10 @@ class INPEDownloader:
         if local_file.exists() and not force:
             # check if they are the same
             if self.is_downloaded(date_str, local_file.parent):
-                print(
-                    f"file {local_file.with_suffix(FileType.GRIB.value)} already exists."
-                )
+                pass
+                # print(
+                #     f"file {local_file.with_suffix(FileType.GRIB.value)} already exists."
+                # )
             else:
                 print(f"Local file {local_file} is outdated. Downloading it.")
                 downloaded_file = self.ftp.download_ftp_file(

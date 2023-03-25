@@ -1,5 +1,8 @@
 """
 Module with specialized classes to understand the INPE FTP Structure
+The idea is to have several classes that implement the following interface:
+remote_file_path(date: str)
+
 """
 import os
 
