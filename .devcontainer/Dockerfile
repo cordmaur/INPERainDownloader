@@ -6,6 +6,7 @@ RUN    apt-get install -y software-properties-common
 RUN    add-apt-repository ppa:deadsnakes/ppa 
 RUN    add-apt-repository ppa:ubuntugis/ppa
 RUN    apt-get update 
+RUN    apt-get install -y git
 RUN    apt-get install -y curl
 RUN    apt-get install -y python3.8 
 RUN    apt-get install -y python3-distutils python3-apt
