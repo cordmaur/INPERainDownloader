@@ -1,22 +1,11 @@
-FROM ubuntu:20.04
-ENV    CPLUS_INCLUDE_PATH=/usr/include/gdal
-ENV    C_INCLUDE_PATH=/usr/include/gdal
-RUN    apt-get update 
-RUN    apt-get install -y software-properties-common 
-RUN    add-apt-repository ppa:deadsnakes/ppa 
-RUN    add-apt-repository ppa:ubuntugis/ppa
-RUN    apt-get update 
-RUN    apt-get install -y curl
-RUN    apt-get install -y python3.8 
-RUN    apt-get install -y python3-distutils python3-apt
-RUN    apt-get install -y python3-pip 
-RUN    apt-get install -y gdal-bin
-RUN    apt-get install -y libgdal-dev
-RUN    export CPLUS_INCLUDE_PATH
-RUN    export C_INCLUDE_PATH
-RUN    pip install GDAL
-# COPY requirements.txt .
+FROM cordmaur/geospatial_minimal:latest
 
-# Install the necessary dependencies
-RUN pip install --no-cache-dir -r shapely,fiona,pyproj,geopandas,rioxarray,pystac-client
-RUN python3 -m pip install -U matplotlib
+# Copy environment.yml (if found) to a temp location so we update the environment. Also
+# copy "noop.txt" so the COPY instruction does not fail if no environment.yml exists.
+# COPY environment.yml* .devcontainer/noop.txt /tmp/conda-tmp/
+# RUN if [ -f "/tmp/conda-tmp/environment.yml" ]; then umask 0002 && /opt/conda/bin/conda env update -n base -f /tmp/conda-tmp/environment.yml; fi \
+#     && rm -rf /tmp/conda-tmp
+
+# [Optional] Uncomment this section to install additional OS packages.
+# RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+#     && apt-get -y install --no-install-recommends <your-package-list-here>
