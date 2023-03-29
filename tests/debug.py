@@ -4,7 +4,7 @@ import geopandas as gpd
 import contextily as cx
 
 from raindownloader.inpe import INPE
-from raindownloader.inpedownloader import INPEDownloader
+from raindownloader.inpedownloader import Downloader
 from raindownloader.utils import FileType
 from rainreporter.reporter import RainReporter
 

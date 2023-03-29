@@ -10,10 +10,11 @@ import ftplib
 import os
 from pathlib import Path
 from typing import Union, List, Optional
-from enum import Enum
+from enum import Enum, auto
 
 # from abc import ABC, abstractmethod
-from datetime import timedelta, datetime
+import datetime
+import calendar
 
 from dateutil import parser
 import pytz
@@ -21,11 +22,19 @@ import pytz
 import xarray as xr
 
 
+class DateFrequency(Enum):
+    """Specifies date frequency for the products"""
+
+    DAILY = auto()
+    MONTHLY = auto()
+
+
 class FileType(Enum):
     """Specifies the file types for downloading"""
 
     GRIB = ".grib2"
     GEOTIFF = ".tif"
+    NETCDF = ".nc"
 
 
 class FTPUtil:
@@ -171,7 +180,7 @@ class OSUtil:
         stat = Path(file_path).stat()
 
         # parse the date correctly
-        local_dt = local_tz.localize(datetime.fromtimestamp(stat.st_mtime))
+        local_dt = local_tz.localize(datetime.datetime.fromtimestamp(stat.st_mtime))
 
         return {"datetime": local_dt, "size": stat.st_size}
 
@@ -180,34 +189,54 @@ class DateProcessor:
     """Docstring"""
 
     @staticmethod
-    def normalize_date(date: Union[str, datetime]) -> str:
+    def normalize_date(date: Union[str, datetime.datetime]) -> str:
         """
         Parse the date string in any format accepted by dateutil and delivers a date
         in the following format: "YYYYMMDD"
         """
-        if not isinstance(date, datetime):
+        if not isinstance(date, datetime.datetime):
             date = parser.parse(date)
 
         return date.strftime("%Y%m%d")
 
     @staticmethod
-    def pretty_date(date: Union[str, datetime]) -> str:
+    def pretty_date(date: Union[str, datetime.datetime]) -> str:
         """Return the date in a pretty printable format dd/mm/yyyy"""
-        if not isinstance(date, datetime):
+        if not isinstance(date, datetime.datetime):
             date = parser.parse(date)
 
         return date.strftime("%d-%m-%Y")
 
     @staticmethod
-    def dates_range(start_date: str, end_date: str) -> List[str]:
+    def dates_range(
+        start_date: str, end_date: str, date_freq: DateFrequency
+    ) -> List[str]:
         """Spawn a dates list in normalized format in the desired range"""
 
-        initial_date = parser.parse(start_date)
+        current_date = parser.parse(start_date)
         final_date = parser.parse(end_date)
 
         dates = []
-        while initial_date <= final_date:
-            dates.append(initial_date.strftime("%Y%m%d"))
-            initial_date += timedelta(days=1)
+
+        if date_freq == DateFrequency.DAILY:
+            while current_date <= final_date:
+                dates.append(current_date.strftime("%Y%m%d"))
+                current_date += datetime.timedelta(days=1)
+
+        elif date_freq == DateFrequency.MONTHLY:
+            # set the first day of the month
+            current_date = datetime.datetime(current_date.year, current_date.month, 1)
+            while current_date <= final_date:
+                dates.append(DateProcessor.normalize_date(current_date))
+                days = calendar.monthrange(current_date.year, current_date.month)[1]
+                current_date += datetime.timedelta(days=days)
 
         return dates
+
+    @staticmethod
+    def month_abrev(date: Union[str, datetime.datetime]) -> str:
+        """Return the month as a three-character string"""
+        if not isinstance(date, datetime.datetime):
+            date = parser.parse(date)
+
+        return date.strftime("%b").lower()

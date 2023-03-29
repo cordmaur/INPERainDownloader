@@ -2,8 +2,9 @@
 Main module for the reporter class
 """
 import io
+from enum import Enum
 from pathlib import Path
-from typing import Union, Iterable, Optional
+from typing import Union, Iterable, Optional, List
 
 from PIL import Image
 
@@ -19,28 +20,19 @@ import xarray as xr
 from shapely import Geometry
 from pyproj import Geod
 
-from raindownloader.inpedownloader import INPEDownloader
-from raindownloader.inpe import INPE
+from raindownloader.inpedownloader import Downloader
+from raindownloader.inpeparser import INPE, INPETypes
 from raindownloader.utils import FileType, GISUtil, DateProcessor
+from raindownloader.parser import BaseParser
 
 
 class RainReporter:
     """Docstring"""
 
     def __init__(
-        self,
-        server: str,
-        remote_folder: str,
-        download_folder: Union[Path, str],
-        filename_fn=INPE.MERGE_filename,
-        structure_fn=INPE.MERGE_structure,
+        self, server: str, download_folder: Union[Path, str], parsers: List[BaseParser]
     ):
-        self.downloader = INPEDownloader(
-            server=server,
-            root=remote_folder,
-            filename_fn=filename_fn,
-            structure_fn=structure_fn,
-        )
+        self.downloader = Downloader(server=server, parsers=parsers)
 
         self.download_folder = Path(download_folder)
 
@@ -82,8 +74,8 @@ class RainReporter:
         """Create the plot with the daily rain in the period"""
 
         area = cube.rio.clip(shp.geometry)
-        daily_rain = area.mean(dim=["x", "y"])
-        plt_ax.bar(x=daily_rain.date, height=daily_rain.variable.squeeze())
+        daily_rain = area.mean(dim=["longitude", "latitude"])
+        plt_ax.bar(x=daily_rain.time, height=daily_rain.variable.squeeze())
 
         # format the x-axis labels
         date_format = mdates.DateFormatter("%d/%m")
@@ -91,7 +83,7 @@ class RainReporter:
         plt.xticks(rotation=60, ha="right")
 
         # get the years
-        dates = cube.date.to_series()
+        dates = cube.time.to_series()
         plt_ax.set_xlabel(f"Chuva média na bacia - Ano: {list(dates.dt.year.unique())}")
 
         plt_ax.set_ylabel("Chuva média na bacia (mm)")
@@ -143,7 +135,9 @@ class RainReporter:
         # so we don't need to write it to disk and reload it
         # first we will clip the area and create a profile
         xmin, xmax, ymin, ymax = plt_ax.axis()
-        subraster = raster.sel(x=slice(xmin, xmax), y=slice(ymax, ymin))
+        subraster = raster.sel(longitude=slice(xmin, xmax), latitude=slice(ymin, ymax))
+
+        subraster = subraster.expand_dims(dim="band")
 
         profile = GISUtil.profile_from_xarray(subraster)
 
@@ -166,7 +160,11 @@ class RainReporter:
 
             # with the dataset in memory, add the basemap
             cx.add_basemap(
-                plt_ax, source=memfile, vmin=cbar.vmin, vmax=cbar.vmax
+                plt_ax,
+                source=memfile,
+                vmin=cbar.vmin,
+                vmax=cbar.vmax,
+                reset_extent=False,
             )  # , vmin=0, vmax=100)
 
         # set the axis labels
@@ -181,28 +179,31 @@ class RainReporter:
         geod = Geod(ellps="WGS84")
         return abs(geod.geometry_area_perimeter(geom)[0]) / 1e6
 
-    def get_cube(self, start_date: str, end_date: str):
+    def get_cube(self, start_date: str, end_date: str, datatype: Union[Enum, str]):
         """Get the accumulated rain in a given period"""
 
         # download the files
         files = self.downloader.download_range(
             start_date=start_date,
             end_date=end_date,
+            datatype=datatype,
             local_folder=self.download_folder,
-            file_type=FileType.GEOTIFF,
+            # file_type=FileType.GEOTIFF,
         )
 
         # create a cube
-        cube = INPEDownloader.create_cube(
+        cube = Downloader.create_cube(
             files=files,
-            name_parser=INPE.parse_MERGE_filename,
-            dim_key="date",
-            squeeze_dims="band",
+            # name_parser=INPE.parse_MERGE_filename,
+            dim_key="time",
+            # squeeze_dims=None
+            # squeeze_dims="band",
         )
 
         return cube
 
-    def rain_in_geoms(self, rain: xr.DataArray, geometries: Iterable[Geometry]):
+    @staticmethod
+    def rain_in_geoms(rain: xr.DataArray, geometries: Iterable[Geometry]):
         """
         Calculate the rain inside the given geometries and returns a dictionary.
         The geometries are shapely.Geometry type and it can be a GeoSeries from Pandas
@@ -236,12 +237,11 @@ class RainReporter:
 
         # first, let's grab the accumulated rain in the period
         cube = self.get_cube(
-            start_date=start_date,
-            end_date=end_date,
-        ).to_array()
+            start_date=start_date, end_date=end_date, datatype=INPETypes.DAILY_RAIN
+        )["prec"]
 
         # accumulate the rain in the time axis
-        rain = cube.sum(dim="date")
+        rain = cube.sum(dim="time")
 
         # then, open the shapefile
         shp = gpd.read_file(shapefile)

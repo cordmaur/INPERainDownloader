@@ -4,6 +4,7 @@ Module with specialized classes to understand the INPE FTP Structure
 import ftplib
 import os
 from pathlib import Path
+from enum import Enum
 from typing import Union, List, Callable, Optional
 
 # from abc import ABC, abstractmethod
@@ -14,24 +15,17 @@ import rioxarray as xrio
 import rasterio as rio
 
 from .utils import DateProcessor, FTPUtil, OSUtil, FileType
-from .inpe import INPE
+from .inpeparser import INPETypes
+from .parser import BaseParser
 
 
-class INPEDownloader:
-    """Business logic to download files from INPE structure"""
+class Downloader:
+    """Business logic to download files from a given structure"""
 
-    def __init__(
-        self,
-        server: str,
-        root: str,
-        filename_fn=INPE.MERGE_filename,
-        structure_fn=INPE.MERGE_structure,
-    ) -> None:
+    def __init__(self, server: str, parsers: List[BaseParser]) -> None:
 
         self.ftp = FTPUtil(server)
-        self.root = Path(root).as_posix()
-        self.filename_fn = filename_fn
-        self.structure_fn = structure_fn
+        self.parsers = parsers
 
     @staticmethod
     def grib2tif(grib_file: Union[str, Path], epsg: int = 4326) -> Path:
@@ -66,17 +60,28 @@ class INPEDownloader:
 
         return filename
 
+    @property
+    def data_types(self):
+        """Return the data types available in the parsers"""
+        return [parse.type for parse in self.parsers]
+
     def is_downloaded(
-        self, date_str: str, local_folder: Union[str, Path], check_for_update=False
+        self,
+        date_str: str,
+        local_folder: Union[str, Path],
+        datatype: Union[Enum, str],
+        check_for_update=False,
     ) -> bool:
         """Compare remote and local files and return if they are equal"""
         # create a string pointing to the remote file and get its info
-        remote_file = self.remote_file_path(date_str)
+        remote_file = self.remote_file_path(date_str, datatype=datatype)
         remote_info = self.ftp.get_ftp_file_info(remote_file=remote_file)
 
         # create the local_file path always pointing to the .GRIB!!!!
         local_file = self.local_file_path(
-            date_str, local_folder, file_type=FileType.GRIB
+            date_str,
+            local_folder,
+            datatype=datatype,  # file_type=FileType.GRIB
         )
 
         # if the file does not exist, exit with false
@@ -96,30 +101,46 @@ class INPEDownloader:
             return (remote_info["size"] == local_info["size"]) and (
                 remote_info["datetime"] == local_info["datetime"]
             )
-        else:
-            return True
 
-    def compare_files(self, date_str: str, local_folder: Union[str, Path]) -> None:
+        return True
+
+    def compare_files(
+        self,
+        date_str: str,
+        local_folder: Union[str, Path],
+        datatype: Union[INPETypes, str],
+    ) -> None:
         """Compare remote and local files visually"""
-        remote_file = self.remote_file_path(date_str)
+        remote_file = self.remote_file_path(date_str, datatype=datatype)
         remote_info = self.ftp.get_ftp_file_info(remote_file=remote_file)
 
-        local_file = self.local_file_path(date_str, local_folder)
+        local_file = self.local_file_path(date_str, local_folder, datatype=datatype)
         local_info = OSUtil.get_local_file_info(local_file)
         print(remote_info)
         print(local_info)
 
-    def remote_file_path(self, date_str: str) -> str:
+    def get_parser(self, datatype: Union[Enum, str]) -> BaseParser:
+        """Get the correct parser for the specified datatype"""
+        for parser in self.parsers:
+            if parser.type == datatype:
+                return parser
+
+        raise ValueError(f"Parser not found for data type {datatype}")
+
+    def remote_file_path(self, date_str: str, datatype: Union[Enum, str]) -> str:
         """Create the remote file path given a date"""
-        filename = self.filename_fn(date_str)
-        folder = self.structure_fn(date_str)
+        # filename = self.filename_fn(date_str)
+        # folder = self.structure_fn(date_str)
 
-        return "/".join([self.root, folder, filename])
+        # return "/".join([self.root, folder, filename])
+        parser = self.get_parser(datatype=datatype)
 
-    def remote_file_exists(self, date_str: str) -> bool:
+        return parser.target(date_str=date_str)
+
+    def remote_file_exists(self, date_str: str, datatype: Union[Enum, str]) -> bool:
         """Docstring"""
 
-        remote_path = self.remote_file_path(date_str)
+        remote_path = self.remote_file_path(date_str, datatype=datatype)
         try:
             self.ftp.ftp.size(remote_path)
 
@@ -136,30 +157,36 @@ class INPEDownloader:
         self,
         date_str: str,
         local_folder: Union[str, Path],
-        file_type: FileType = FileType.GRIB,
+        datatype: Union[Enum, str],
+        # file_type: FileType = FileType.GRIB,
     ) -> Path:
         """
         Create the path for the local file, depending on the folder and file type.
         It uses the filename function to derive the final filename.
         """
-        filename = Path(self.filename_fn(date_str))
+        parser = self.get_parser(datatype=datatype)
+        filename = Path(parser.filename(date_str))
 
-        filename = filename.with_suffix(file_type.value)
+        # if file_type is not None:
+        #     filename = filename.with_suffix(file_type.value)
 
         return Path(local_folder) / filename
 
-    def files_range(self, start_date_str: str, end_date_str: str) -> List[str]:
+    def files_range(
+        self, start_date_str: str, end_date_str: str, datatype: Union[INPETypes, str]
+    ) -> List[str]:
         """Docstring"""
         dates = DateProcessor.dates_range(
             start_date=start_date_str, end_date=end_date_str
         )
-        return [self.remote_file_path(date) for date in dates]
+        return [self.remote_file_path(date, datatype=datatype) for date in dates]
 
     def download_file(
         self,
         date_str: str,
         local_folder: Union[str, Path],
-        file_type: FileType = FileType.GRIB,
+        datatype: Union[Enum, str],
+        file_type: Optional[FileType] = None,
         force: bool = False,
     ) -> Path:
         """
@@ -170,14 +197,16 @@ class INPEDownloader:
         downloaded again, unless it has been updated on the server.
         """
         # get the file locations
-        remote_file = self.remote_file_path(date_str)
-        local_file = self.local_file_path(date_str, local_folder, file_type=file_type)
+        remote_file = self.remote_file_path(date_str, datatype=datatype)
+        local_file = self.local_file_path(
+            date_str, local_folder, datatype=datatype  # , file_type=file_type
+        )
 
         # check if file exists
         downloaded_file = None
         if local_file.exists() and not force:
             # check if they are the same
-            if self.is_downloaded(date_str, local_file.parent):
+            if self.is_downloaded(date_str, local_file.parent, datatype=datatype):
                 pass
                 # print(
                 #     f"file {local_file.with_suffix(FileType.GRIB.value)} already exists."
@@ -196,7 +225,7 @@ class INPEDownloader:
         if file_type == FileType.GEOTIFF and (
             (downloaded_file is not None) or (not local_file.exists())
         ):
-            INPEDownloader.grib2tif(local_file.with_suffix(FileType.GRIB.value))
+            Downloader.grib2tif(local_file.with_suffix(FileType.GRIB.value))
 
         return local_file
 
@@ -204,6 +233,7 @@ class INPEDownloader:
         self,
         dates: List[str],
         local_folder: Union[str, Path],
+        datatype: Union[Enum, str],
         file_type: FileType = FileType.GRIB,
         force: bool = False,
     ) -> List[Path]:
@@ -223,6 +253,7 @@ class INPEDownloader:
                 self.download_file(
                     date_str=date,
                     local_folder=local_folder,
+                    datatype=datatype,
                     file_type=file_type,
                     force=force,
                 )
@@ -238,6 +269,7 @@ class INPEDownloader:
         start_date: str,
         end_date: str,
         local_folder: Union[str, Path],
+        datatype: Union[Enum, str],
         file_type: FileType = FileType.GRIB,
         force: bool = False,
     ) -> List[Path]:
@@ -246,13 +278,20 @@ class INPEDownloader:
         If there is a problem during the download of one file, a message error will be in the list.
         """
 
-        dates = DateProcessor.dates_range(start_date, end_date)
+        dates = self.get_parser(datatype).dates_range(start_date, end_date)
         return self.download_files(
-            dates=dates, local_folder=local_folder, file_type=file_type, force=force
+            dates=dates,
+            local_folder=local_folder,
+            file_type=file_type,
+            force=force,
+            datatype=datatype,
         )
 
     def download_recent(
-        self, local_folder: Union[str, Path], num: int = 1
+        self,
+        local_folder: Union[str, Path],
+        datatype: Union[Enum, str],
+        num: int = 1,
     ) -> List[Path]:
         """
         Download the recent x files, where x is the number of files to download.
@@ -266,15 +305,18 @@ class INPEDownloader:
         now_str = DateProcessor.normalize_date(now)
 
         return self.download_range(
-            start_date=first_str, end_date=now_str, local_folder=local_folder
+            start_date=first_str,
+            end_date=now_str,
+            local_folder=local_folder,
+            datatype=datatype,
         )
 
     @staticmethod
     def create_cube(
         files: List,
-        name_parser: Optional[Callable] = None,
-        dim_key: Optional[str] = None,
-        squeeze_dims: Optional[Union[List[str], str]] = None,
+        # name_parser: Optional[Callable] = None,
+        dim_key: Optional[str] = "time",
+        # squeeze_dims: Optional[Union[List[str], str]] = None,
     ) -> xr.Dataset:
         """
         Stack the images in the list as one XARRAY cube.
@@ -283,25 +325,33 @@ class INPEDownloader:
         """
 
         # first, check if name parser and dimension key are setted correctly
-        if (name_parser is None) ^ (dim_key is None):
-            raise ValueError("If name parser or dim key is set, both must be setted.")
+        # if (name_parser is None) ^ (dim_key is None):
+        #     raise ValueError("If name parser or dim key is set, both must be setted.")
 
         # set the stacked dimension name
         dim = "time" if dim_key is None else dim_key
 
         # create a cube with the files
         data_arrays = [xr.open_dataset(file) for file in files if Path(file).exists()]
+        # data_arrays = [
+        #     xrio.open_rasterio(file) for file in files if Path(file).exists()
+        # ]
+
         cube = xr.concat(data_arrays, dim=dim)
 
-        # set the new dimension correctly
-        if name_parser is not None:
-            # create the new coordinates based on the parser
-            coords = [name_parser(file)[dim_key] for file in files]
-            cube = cube.assign_coords({dim: coords})
-        else:
-            cube = cube.assign_coords({dim: cube[dim]})
+        # todo: correct the longitude and CRS
+        cube = cube.assign_coords({"longitude": cube.longitude - 360})
+        cube = cube.rio.write_crs("epsg:4326")
 
-        if squeeze_dims is not None:
-            cube = cube.squeeze(dim=squeeze_dims)
+        # set the new dimension correctly
+        # if name_parser is not None:
+        #     # create the new coordinates based on the parser
+        #     coords = [name_parser(file)[dim_key] for file in files]
+        #     cube = cube.assign_coords({dim: coords})
+        # else:
+        #     cube = cube.assign_coords({dim: cube[dim]})
+
+        # if squeeze_dims is not None and squeeze_dims in cube.dims:
+        #     cube = cube.squeeze(dim=squeeze_dims)
 
         return cube

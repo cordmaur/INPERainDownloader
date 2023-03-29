@@ -6,3 +6,5 @@ rioxarray
 pystac-client
 matplotlib
 pytest
+cfgrib
+netCDF4

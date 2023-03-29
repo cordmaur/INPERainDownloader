@@ -8,13 +8,13 @@ import pytest
 
 from raindownloader.utils import FileType, DateProcessor
 from raindownloader.inpe import INPE
-from raindownloader.inpedownloader import INPEDownloader
+from raindownloader.inpedownloader import Downloader
 
 
 class TestDownloader:
     """Test the INPE downloader class"""
 
-    downloader = INPEDownloader(
+    downloader = Downloader(
         server=INPE.FTPurl,
         root=INPE.DailyMERGEroot,
         filename_fn=INPE.MERGE_filename,
@@ -39,7 +39,7 @@ class TestDownloader:
         """Test the initialization of the class"""
 
         # create a downloader
-        assert isinstance(self.downloader, INPEDownloader)
+        assert isinstance(self.downloader, Downloader)
 
     def test_is_downloaded(self, fixture_data):
         """Test if a specific date is already downloaded and updated"""
