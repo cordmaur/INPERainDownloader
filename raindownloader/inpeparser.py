@@ -12,6 +12,9 @@ from typing import Union
 from enum import Enum, auto
 
 from dateutil import parser
+import xarray as xr
+
+
 from .utils import DateProcessor
 from .parser import BaseParser, DateFrequency
 
@@ -80,6 +83,24 @@ class INPE:
         month_year = DateProcessor.month_abrev(date) + "_" + str(date.year)
         return base_name + month_year + suffix
 
+    @staticmethod
+    def grib2_post_proc(dset: xr.Dataset) -> xr.Dataset:
+        """Adjust the longitude in INPE's grib2 files and sets the CRS"""
+
+        dset = dset.assign_coords({"longitude": dset.longitude - 360})
+        dset = dset.rio.write_crs("epsg:4326")
+        return dset
+
+    @staticmethod
+    def nc_post_proc(dset: xr.Dataset) -> xr.Dataset:
+        """Adjust variable names in the netCDF files and set"""
+
+        dset = dset.rename_dims({"lon": "longitude", "lat": "latitude"})
+        dset = dset.rename_vars({"lon": "longitude", "lat": "latitude"})
+        dset = dset.rio.write_crs("epsg:4326")
+
+        return dset
+
 
 class INPEParsers:
     """Just a structure to store the parsers for the INPE FTP"""
@@ -99,3 +120,4 @@ class INPEParsers:
     )
 
     parsers = [daily_rain_parser, monthly_accum_yearly]
+    post_processors = {".grib2": INPE.grib2_post_proc, ".nc": INPE.nc_post_proc}

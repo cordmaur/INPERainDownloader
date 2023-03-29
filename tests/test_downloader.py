@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from raindownloader.utils import FileType, DateProcessor
-from raindownloader.inpe import INPE
+from raindownloader.inpeparser import INPE
 from raindownloader.inpedownloader import Downloader
 
 

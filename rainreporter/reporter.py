@@ -21,8 +21,8 @@ from shapely import Geometry
 from pyproj import Geod
 
 from raindownloader.inpedownloader import Downloader
-from raindownloader.inpeparser import INPE, INPETypes
-from raindownloader.utils import FileType, GISUtil, DateProcessor
+from raindownloader.inpeparser import INPETypes
+from raindownloader.utils import GISUtil, DateProcessor
 from raindownloader.parser import BaseParser
 
 

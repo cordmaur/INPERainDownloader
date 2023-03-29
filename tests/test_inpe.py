@@ -4,7 +4,7 @@ Tests for the INPE classes
 import os
 import pytest
 
-from raindownloader.inpe import INPE
+from raindownloader.inpeparser import INPE
 
 
 class TestINPE:

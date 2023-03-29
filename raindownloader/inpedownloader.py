@@ -5,7 +5,7 @@ import ftplib
 import os
 from pathlib import Path
 from enum import Enum
-from typing import Union, List, Callable, Optional
+from typing import Union, List, Optional
 
 # from abc import ABC, abstractmethod
 from datetime import timedelta, datetime
@@ -22,10 +22,22 @@ from .parser import BaseParser
 class Downloader:
     """Business logic to download files from a given structure"""
 
-    def __init__(self, server: str, parsers: List[BaseParser]) -> None:
+    def __init__(
+        self,
+        server: str,
+        parsers: List[BaseParser],
+        avoid_update: bool = True,
+        post_processors: Optional[dict] = None,
+    ) -> None:
 
         self.ftp = FTPUtil(server)
         self.parsers = parsers
+
+        # Avoid checking for updates in the server everytime a file is requested
+        self.avoid_update = avoid_update
+
+        # functions to be applied to filetypes after they are loaded
+        self.post_processors = {} if post_processors is None else post_processors
 
     @staticmethod
     def grib2tif(grib_file: Union[str, Path], epsg: int = 4326) -> Path:
@@ -176,7 +188,7 @@ class Downloader:
         self, start_date_str: str, end_date_str: str, datatype: Union[INPETypes, str]
     ) -> List[str]:
         """Docstring"""
-        dates = DateProcessor.dates_range(
+        dates = self.get_parser(datatype).dates_range(
             start_date=start_date_str, end_date=end_date_str
         )
         return [self.remote_file_path(date, datatype=datatype) for date in dates]
@@ -206,7 +218,9 @@ class Downloader:
         downloaded_file = None
         if local_file.exists() and not force:
             # check if they are the same
-            if self.is_downloaded(date_str, local_file.parent, datatype=datatype):
+            if self.avoid_update or self.is_downloaded(
+                date_str, local_file.parent, datatype=datatype
+            ):
                 pass
                 # print(
                 #     f"file {local_file.with_suffix(FileType.GRIB.value)} already exists."
@@ -312,16 +326,14 @@ class Downloader:
         )
 
     @staticmethod
-    def create_cube(
+    def _create_cube(
         files: List,
         # name_parser: Optional[Callable] = None,
         dim_key: Optional[str] = "time",
         # squeeze_dims: Optional[Union[List[str], str]] = None,
     ) -> xr.Dataset:
         """
-        Stack the images in the list as one XARRAY cube.
-        The stacked dimension can be obtained from the filename, by a parser that
-        returns an dictionary and the name of the dimension key (returned by the dictionary)
+        Stack the images in the list as one XARRAY Dataset cube.
         """
 
         # first, check if name parser and dimension key are setted correctly
@@ -332,26 +344,23 @@ class Downloader:
         dim = "time" if dim_key is None else dim_key
 
         # create a cube with the files
-        data_arrays = [xr.open_dataset(file) for file in files if Path(file).exists()]
-        # data_arrays = [
-        #     xrio.open_rasterio(file) for file in files if Path(file).exists()
-        # ]
+        data_arrays = [
+            xr.open_dataset(file).astype("float32")
+            for file in files
+            if Path(file).exists()
+        ]
 
         cube = xr.concat(data_arrays, dim=dim)
 
-        # todo: correct the longitude and CRS
-        cube = cube.assign_coords({"longitude": cube.longitude - 360})
-        cube = cube.rio.write_crs("epsg:4326")
+        return cube
 
-        # set the new dimension correctly
-        # if name_parser is not None:
-        #     # create the new coordinates based on the parser
-        #     coords = [name_parser(file)[dim_key] for file in files]
-        #     cube = cube.assign_coords({dim: coords})
-        # else:
-        #     cube = cube.assign_coords({dim: cube[dim]})
+    def create_cube(self, files: list, dim_key: Optional[str] = "time") -> xr.Dataset:
+        """Create a cube from the list of files and apply the post_processor of the downloader"""
 
-        # if squeeze_dims is not None and squeeze_dims in cube.dims:
-        #     cube = cube.squeeze(dim=squeeze_dims)
+        cube = Downloader._create_cube(files=files, dim_key=dim_key)
+
+        file_format = Path(files[0]).suffix
+        if file_format in self.post_processors:
+            cube = self.post_processors[file_format](cube)
 
         return cube
