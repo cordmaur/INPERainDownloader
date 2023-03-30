@@ -9,7 +9,7 @@ import os
 # from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Union
-from enum import Enum, auto
+from enum import Enum
 
 from dateutil import parser
 import xarray as xr
@@ -22,8 +22,9 @@ from .parser import BaseParser, DateFrequency
 class INPETypes(Enum):
     """Data types available from INPE"""
 
-    DAILY_RAIN = auto()
-    MONTHLY_ACCUM_YEARLY = auto()
+    DAILY_RAIN = "prec"
+    MONTHLY_ACCUM_YEARLY = "pacum"
+    DAILY_AVERAGE = "pmed"
 
 
 class INPE:
@@ -84,6 +85,23 @@ class INPE:
         return base_name + month_year + suffix
 
     @staticmethod
+    def MERGE_daily_average_filename(
+        date_str: str,
+    ) -> str:  # pylint: disable=invalid-name
+        """
+        Daily Average
+        Create the filename of the MERGE file, given a specific date
+        """
+        # get the datetime
+        date = parser.parse(date_str)
+
+        base_name = "MERGE_CPTEC_12Z"
+        suffix = ".nc"
+
+        day_month = f"{date.day:02d}{DateProcessor.month_abrev(date)}"
+        return base_name + day_month + suffix
+
+    @staticmethod
     def grib2_post_proc(dset: xr.Dataset) -> xr.Dataset:
         """Adjust the longitude in INPE's grib2 files and sets the CRS"""
 
@@ -119,5 +137,12 @@ class INPEParsers:
         date_freq=DateFrequency.MONTHLY,
     )
 
-    parsers = [daily_rain_parser, monthly_accum_yearly]
+    daily_average = BaseParser(
+        datatype=INPETypes.DAILY_AVERAGE,
+        root="/modelos/tempo/MERGE/GPM/CLIMATOLOGY/DAILY_AVERAGE",
+        fn_creator=INPE.MERGE_daily_average_filename,
+        date_freq=DateFrequency.DAILY,
+    )
+
+    parsers = [daily_rain_parser, monthly_accum_yearly, daily_average]
     post_processors = {".grib2": INPE.grib2_post_proc, ".nc": INPE.nc_post_proc}

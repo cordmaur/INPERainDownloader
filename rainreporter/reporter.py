@@ -4,7 +4,7 @@ Main module for the reporter class
 import io
 from enum import Enum
 from pathlib import Path
-from typing import Union, Iterable, Optional, List
+from typing import Union, Iterable, Optional, List, Callable
 
 from PIL import Image
 
@@ -21,7 +21,7 @@ from shapely import Geometry
 from pyproj import Geod
 
 from raindownloader.inpedownloader import Downloader
-from raindownloader.inpeparser import INPETypes
+from raindownloader.inpeparser import INPETypes, INPEParsers
 from raindownloader.utils import GISUtil, DateProcessor
 from raindownloader.parser import BaseParser
 
@@ -30,9 +30,15 @@ class RainReporter:
     """Docstring"""
 
     def __init__(
-        self, server: str, download_folder: Union[Path, str], parsers: List[BaseParser]
+        self,
+        server: str,
+        download_folder: Union[Path, str],
+        parsers: List[BaseParser] = INPEParsers.parsers,
+        post_processors: Optional[dict] = INPEParsers.post_processors,
     ):
-        self.downloader = Downloader(server=server, parsers=parsers)
+        self.downloader = Downloader(
+            server=server, parsers=parsers, post_processors=post_processors
+        )
 
         self.download_folder = Path(download_folder)
 
@@ -75,7 +81,9 @@ class RainReporter:
 
         area = cube.rio.clip(shp.geometry)
         daily_rain = area.mean(dim=["longitude", "latitude"])
-        plt_ax.bar(x=daily_rain.time, height=daily_rain.variable.squeeze())
+        plt_ax.bar(
+            x=daily_rain.time, height=daily_rain.variable.squeeze(), label="Chuva"
+        )
 
         # format the x-axis labels
         date_format = mdates.DateFormatter("%d/%m")
@@ -88,6 +96,68 @@ class RainReporter:
 
         plt_ax.set_ylabel("Chuva média na bacia (mm)")
         plt_ax.set_title("Chuva Diária Média na Bacia")
+
+    @staticmethod
+    def get_time_series(
+        cube: xr.DataArray,
+        shp: gpd.GeoDataFrame,
+        reducer: Callable,
+        keep_dim: str = "time",  # specify the dimension along with we will retrieve the TS
+    ):
+        """Get a time series of values within the shape, given a reducer method"""
+        # clip to the desired area
+        area = cube.rio.clip(shp.geometry)
+
+        # get the dimensions to be reduced
+        reduce_dims = list(cube.dims)
+        reduce_dims.remove(keep_dim)
+
+        series = reducer(area, dim=reduce_dims)
+
+        return series.to_series()
+
+    @staticmethod
+    def plot_monthly_rain(
+        plt_ax: plt.Axes,
+        cube: xr.DataArray,
+        shp: gpd.GeoDataFrame,
+        plot_mlt: bool = True,
+        **kw_formatting,
+    ):
+        """Plot the monthly rain in a given axes"""
+
+        # get the time series
+        time_series = RainReporter.get_time_series(
+            cube=cube, shp=shp, reducer=xr.DataArray.mean, keep_dim="time"
+        )
+
+        time_series.plot(ax=plt_ax, legend=True, **kw_formatting)
+
+        if plot_mlt:
+            # create a dataframe
+            dframe = time_series.to_frame().reset_index()
+
+            mlt = (
+                dframe.groupby(by=dframe["time"].dt.month)
+                .mean()
+                .rename(columns={time_series.name: "MLT"})
+            )
+
+            # reindex DF with the month numbers
+            dframe.set_index(dframe["time"].dt.month.values)
+            dframe = dframe.join(mlt)
+            dframe.set_index("time", inplace=True)
+
+            dframe.plot(
+                y="MLT",
+                color="orange",
+                linestyle="--",
+                marker="o",
+                ax=plt_ax,
+                linewidth=0.9,
+            )
+
+            return mlt
 
     @staticmethod
     def create_colorbar(
@@ -179,7 +249,9 @@ class RainReporter:
         geod = Geod(ellps="WGS84")
         return abs(geod.geometry_area_perimeter(geom)[0]) / 1e6
 
-    def get_cube(self, start_date: str, end_date: str, datatype: Union[Enum, str]):
+    def get_cube(
+        self, start_date: str, end_date: str, datatype: Union[Enum, str]
+    ) -> xr.DataArray:
         """Get the accumulated rain in a given period"""
 
         # download the files
@@ -192,13 +264,16 @@ class RainReporter:
         )
 
         # create a cube
-        cube = Downloader.create_cube(
+        cube = self.downloader.create_cube(
             files=files,
-            # name_parser=INPE.parse_MERGE_filename,
             dim_key="time",
-            # squeeze_dims=None
-            # squeeze_dims="band",
-        )
+        )  # pylint: disable=protected-access
+
+        # reduce the cube from a dataset to a data array, by using the variable name
+        if isinstance(datatype, Enum) and datatype.value in cube.data_vars:
+            cube = cube[datatype.value]
+        else:
+            cube = cube.to_array()
 
         return cube
 
@@ -238,7 +313,7 @@ class RainReporter:
         # first, let's grab the accumulated rain in the period
         cube = self.get_cube(
             start_date=start_date, end_date=end_date, datatype=INPETypes.DAILY_RAIN
-        )["prec"]
+        )
 
         # accumulate the rain in the time axis
         rain = cube.sum(dim="time")
@@ -271,7 +346,25 @@ class RainReporter:
         ### Plot the daily rain graph
         RainReporter.plot_daily_rain(plt_ax=rep_axs[2], cube=cube, shp=shp)
 
-        return fig, rain, shp, cube
+        ### Plot the daily average rain
+        daily_cube = self.get_cube(
+            start_date=start_date, end_date=end_date, datatype=INPETypes.DAILY_AVERAGE
+        )
+
+        daily_average = RainReporter.get_time_series(
+            cube=daily_cube, shp=shp, reducer=xr.DataArray.mean
+        )
+
+        daily_average.index = cube.time.data
+        rep_axs[2].plot(
+            daily_average.index,
+            daily_average.values,
+            label="Média diária",
+            color="orange",
+        )
+        rep_axs[2].legend()
+
+        return rep_axs, rain, shp, cube
 
     def animate_rain(
         self,
@@ -281,60 +374,60 @@ class RainReporter:
         file_name: Union[Path, str],
     ):
         """Save an animated gif to the informed folder"""
-        # first, let's grab the accumulated rain in the period
-        cube = self.get_cube(
-            start_date=start_date,
-            end_date=end_date,
-        ).to_array()
+        # # first, let's grab the accumulated rain in the period
+        # cube = self.get_cube(
+        #     start_date=start_date,
+        #     end_date=end_date,
+        # ).to_array()
 
-        # then, open the shapefile
-        shp = gpd.read_file(shapefile)
+        # # then, open the shapefile
+        # shp = gpd.read_file(shapefile)
 
-        # check if there is something in the shapefile
-        if len(shp) == 0:
-            raise ValueError("No elements in the input shapefile")
+        # # check if there is something in the shapefile
+        # if len(shp) == 0:
+        #     raise ValueError("No elements in the input shapefile")
 
-        if len(shp) > 1:
-            print(f"{len(shp)} featuers found in shapefile, selecting all of them.")
+        # if len(shp) > 1:
+        #     print(f"{len(shp)} featuers found in shapefile, selecting all of them.")
 
-        # convert the shapefile to the raster CRS (more cost effective)
-        shp.to_crs(cube.rio.crs, inplace=True)
+        # # convert the shapefile to the raster CRS (more cost effective)
+        # shp.to_crs(cube.rio.crs, inplace=True)
 
-        # create a figure to be used as a canvas
-        fig = plt.figure()
+        # # create a figure to be used as a canvas
+        # fig = plt.figure()
 
-        # set the limits for the colorbar
-        vmin = 0
-        vmax = float(cube.max()) * 0.8
+        # # set the limits for the colorbar
+        # vmin = 0
+        # vmax = float(cube.max()) * 0.8
 
-        # create a list to store the temporary in-memory files
-        files = []
-        for date in cube.date.data:
-            plt_ax = fig.add_subplot()
-            RainReporter.plot_raster_shape(
-                cube.sel(date=date), shape=shp, plt_ax=plt_ax, vmin=vmin, vmax=vmax
-            )
-            date_str = DateProcessor.pretty_date(pd.to_datetime(date).to_pydatetime())
+        # # create a list to store the temporary in-memory files
+        # files = []
+        # for date in cube.date.data:
+        #     plt_ax = fig.add_subplot()
+        #     RainReporter.plot_raster_shape(
+        #         cube.sel(date=date), shape=shp, plt_ax=plt_ax, vmin=vmin, vmax=vmax
+        #     )
+        #     date_str = DateProcessor.pretty_date(pd.to_datetime(date).to_pydatetime())
 
-            fig.suptitle(f"Dia {date_str}", x=0.4)
+        #     fig.suptitle(f"Dia {date_str}", x=0.4)
 
-            # Create a temporary file
-            file_like = io.BytesIO()
+        #     # Create a temporary file
+        #     file_like = io.BytesIO()
 
-            fig.savefig(file_like)
-            files.append(file_like)
-            fig.clear()
+        #     fig.savefig(file_like)
+        #     files.append(file_like)
+        #     fig.clear()
 
-        # Now, with the files created in memory, let's use PIL to save the GIF
-        images = []
-        for file in files:
-            img = Image.open(file)
-            images.append(img)
+        # # Now, with the files created in memory, let's use PIL to save the GIF
+        # images = []
+        # for file in files:
+        #     img = Image.open(file)
+        #     images.append(img)
 
-        images[0].save(
-            file_name,
-            save_all=True,
-            append_images=images[1:],
-            duration=200,
-            loop=0,
-        )
+        # images[0].save(
+        #     file_name,
+        #     save_all=True,
+        #     append_images=images[1:],
+        #     duration=200,
+        #     loop=0,
+        # )
