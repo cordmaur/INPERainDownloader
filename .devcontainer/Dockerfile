@@ -5,7 +5,7 @@ FROM osgeo/gdal:ubuntu-small-latest
 RUN apt-get update && apt-get -y install python3-pip --fix-missing
 RUN apt-get -y install git
 RUN apt-get -y install libeccodes0 libeccodes-dev
-RUN pip install geopandas rioxarray matplotlib notebook ipykernel contextily netCDF4 cfgrib eccodes --no-cache-dir
+RUN pip install geopandas rioxarray matplotlib notebook ipykernel contextily netCDF4 cfgrib eccodes adjustText --no-cache-dir
 
 # FROM ubuntu:20.04
 # ENV    CPLUS_INCLUDE_PATH=/usr/include/gdal

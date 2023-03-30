@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import Union
 from enum import Enum
 
+import matplotlib.colors as colors
+
 from dateutil import parser
 import xarray as xr
-
 
 from .utils import DateProcessor
 from .parser import BaseParser, DateFrequency
@@ -32,6 +33,15 @@ class INPE:
 
     FTPurl = "ftp.cptec.inpe.br"
     DailyMERGEroot = "/modelos/tempo/MERGE/GPM/DAILY"
+
+    # Define the colors and positions of the color stops
+    cmap_colors = [(1.0, 1.0, 1.0), (1, 1, 1.0), (0.5, 0.5, 1.0), (1.0, 0.4, 0.6)]
+    positions = [0.0, 0.1, 0.7, 1.0]
+
+    # Create the colormap using LinearSegmentedColormap
+    cmap = colors.LinearSegmentedColormap.from_list(
+        "my_colormap", list(zip(positions, cmap_colors))
+    )
 
     def __init__(self, root_path: str) -> None:
         self.root = os.path.normpath(root_path)

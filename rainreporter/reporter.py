@@ -20,8 +20,10 @@ import xarray as xr
 from shapely import Geometry
 from pyproj import Geod
 
+from adjustText import adjust_text
+
 from raindownloader.inpedownloader import Downloader
-from raindownloader.inpeparser import INPETypes, INPEParsers
+from raindownloader.inpeparser import INPETypes, INPEParsers, INPE
 from raindownloader.utils import GISUtil, DateProcessor
 from raindownloader.parser import BaseParser
 
@@ -39,6 +41,9 @@ class RainReporter:
         self.downloader = Downloader(
             server=server, parsers=parsers, post_processors=post_processors
         )
+
+        self.cities = gpd.read_file("../data/cities/cidades.shp")
+        self.states = gpd.read_file("../data/states/BR_UF_2022.shp")
 
         self.download_folder = Path(download_folder)
 
@@ -68,7 +73,9 @@ class RainReporter:
         """Create the layout and return figure and axes as a list"""
         fig = plt.figure(constrained_layout=True, figsize=(10, 10))
 
-        gridspec = fig.add_gridspec(2, 3, height_ratios=[1.2, 1])
+        gridspec = fig.add_gridspec(
+            2, 3, width_ratios=[0.3, 0.8, 0.8], height_ratios=[1.2, 1]
+        )
         text_ax = fig.add_subplot(gridspec[0, 0])
         raster_ax = fig.add_subplot(gridspec[0, 1:])
         chart_ax = fig.add_subplot(gridspec[1, :])
@@ -167,6 +174,7 @@ class RainReporter:
         labelsize: int = 12,
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
+        cmap: Optional[Union[str, colors.Colormap]] = None,
     ):
         """Add a colorbar to the given axes based on the values of the raster"""
 
@@ -174,9 +182,12 @@ class RainReporter:
         vmin = float(raster.min()) if vmin is None else vmin
         vmax = float(raster.max()) * 0.8 if vmax is None else vmax
 
+        # if no cmap is defined, use the INPE version
+        cmap = INPE.cmap if cmap is None else cmap
+
         # Create a colorbar object with the desired range of values
         norm = colors.Normalize(vmin=vmin, vmax=vmax)
-        cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap="viridis"), ax=plt_ax)  # type: ignore[attr]
+        cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=plt_ax)  # type: ignore[attr]
 
         # Customize the colorbar
         cbar.set_label(label)
@@ -191,6 +202,7 @@ class RainReporter:
         plt_ax: plt.Axes,
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
+        cmap: Optional[Union[str, colors.Colormap]] = None,
     ):
         """
         Given a time period and a shapefile (loaded in geopandas),
@@ -198,7 +210,11 @@ class RainReporter:
         """
 
         shape.plot(
-            ax=plt_ax, figsize=(5, 5), alpha=0.7, facecolor="none", edgecolor="white"
+            ax=plt_ax,
+            figsize=(5, 5),
+            alpha=1,
+            facecolor="none",
+            edgecolor="firebrick",
         )
 
         # to use contextily, we will write the raster to a MemoryFile
@@ -226,15 +242,21 @@ class RainReporter:
                 labelsize=10,
                 vmin=vmin,
                 vmax=vmax,
+                cmap=cmap,
             )
+
+            # if no cmap is defined, use the INPE version
+            cmap = INPE.cmap if cmap is None else cmap
 
             # with the dataset in memory, add the basemap
             cx.add_basemap(
-                plt_ax,
+                ax=plt_ax,
                 source=memfile,
                 vmin=cbar.vmin,
                 vmax=cbar.vmax,
                 reset_extent=False,
+                cmap=cmap,
+                alpha=1,
             )  # , vmin=0, vmax=100)
 
         # set the axis labels
@@ -337,6 +359,36 @@ class RainReporter:
 
         ### Plot the map with the rain
         self.plot_raster_shape(raster=rain, shape=shp, plt_ax=rep_axs[1])
+
+        ### Add cities and state boundaries
+        # todo: extract as a method
+        self.states.plot(
+            ax=rep_axs[1], facecolor="none", linewidth=0.6, edgecolor="gray"
+        )
+        xmin, xmax, ymin, ymax = rep_axs[1].axis()
+
+        cities_in_view = self.cities.clip_by_rect(xmin, ymin, xmax, ymax)
+        cities_in_view = self.cities[~cities_in_view.is_empty]
+
+        filtered_cities = cities_in_view.sort_values(
+            by="populacao", ascending=False
+        ).iloc[:5]
+        filtered_cities.plot(ax=rep_axs[1], color="black")
+
+        # Annotate the city names
+        texts = []
+        for idx, row in filtered_cities.iterrows():
+            texts.append(
+                rep_axs[1].text(
+                    x=row.geometry.x,
+                    y=row.geometry.y,
+                    s=row["nome"],
+                    color="black",
+                    bbox=dict(facecolor="none", edgecolor="none"),
+                )
+            )
+
+        adjust_text(texts, ax=rep_axs[1], expand_axes=True, ensure_inside_axes=True)
 
         ### write the tabular text of the report
         rain_stats = self.rain_in_geoms(rain, shp.geometry)
