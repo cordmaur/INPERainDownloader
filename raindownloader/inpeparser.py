@@ -7,13 +7,11 @@ remote_file_path(date: str)
 import os
 
 # from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import Union
 from enum import Enum
+from datetime import datetime
 
 import matplotlib.colors as colors
 
-from dateutil import parser
 import xarray as xr
 
 from .utils import DateProcessor
@@ -26,6 +24,7 @@ class INPETypes(Enum):
     DAILY_RAIN = "prec"
     MONTHLY_ACCUM_YEARLY = "pacum"
     DAILY_AVERAGE = "pmed"
+    MONTHLY_ACUM = "precacum"
 
 
 class INPE:
@@ -47,69 +46,65 @@ class INPE:
         self.root = os.path.normpath(root_path)
 
     @staticmethod
-    def MERGE_structure(date_str: str) -> str:  # pylint: disable=invalid-name
+    def MERGE_structure(date: datetime) -> str:  # pylint: disable=invalid-name
         """Given a date that can be parsed by dateutil, create the structure of the MERGE files"""
-        date = parser.parse(date_str)
         year = str(date.year)
         month = str(date.month).zfill(2)
         return "/".join([year, month])
 
     @staticmethod
-    def MERGE_filename(date_str: str) -> str:  # pylint: disable=invalid-name
+    def MERGE_filename(date: datetime) -> str:  # pylint: disable=invalid-name
         """Create the filename of the MERGE file, given a specific date"""
-        date = DateProcessor.normalize_date(date_str)
-        filename = f"MERGE_CPTEC_{date}.grib2"
-        return filename
+        date_str = DateProcessor.normalize_date(date)
+        return f"MERGE_CPTEC_{date_str}.grib2"
+
+    # @staticmethod
+    # def parse_MERGE_filename(
+    #     filename: Union[str, Path]
+    # ):  # pylint: disable=invalid-name
+    #     """
+    #     Given filename (or full path) in the MERGE/INPE format,
+    #     return a dictionary with the date
+    #     """
+
+    #     # convert to Path
+    #     file = Path(filename)
+
+    #     # get the name
+    #     name = file.stem
+
+    #     date_str = name.split("_")[-1]
+
+    #     return {"date": parser.parse(date_str)}
 
     @staticmethod
-    def parse_MERGE_filename(
-        filename: Union[str, Path]
-    ):  # pylint: disable=invalid-name
-        """
-        Given filename (or full path) in the MERGE/INPE format,
-        return a dictionary with the date
-        """
-
-        # convert to Path
-        file = Path(filename)
-
-        # get the name
-        name = file.stem
-
-        date_str = name.split("_")[-1]
-
-        return {"date": parser.parse(date_str)}
-
-    @staticmethod
-    def MERGE_MAY_filename(date_str: str) -> str:  # pylint: disable=invalid-name
+    def MERGE_MAY_filename(date: datetime) -> str:  # pylint: disable=invalid-name
         """
         Monthly Accumulated Yearly:
         Create the filename of the MERGE file, given a specific date
         """
-        # get the datetime
-        date = parser.parse(date_str)
-
-        base_name = "MERGE_CPTEC_acum_"
-        suffix = ".nc"
         month_year = DateProcessor.month_abrev(date) + "_" + str(date.year)
-        return base_name + month_year + suffix
+        return f"MERGE_CPTEC_acum_{month_year}.nc"
 
     @staticmethod
     def MERGE_daily_average_filename(
-        date_str: str,
+        date: datetime,
     ) -> str:  # pylint: disable=invalid-name
         """
         Daily Average
         Create the filename of the MERGE file, given a specific date
         """
-        # get the datetime
-        date = parser.parse(date_str)
-
-        base_name = "MERGE_CPTEC_12Z"
-        suffix = ".nc"
-
         day_month = f"{date.day:02d}{DateProcessor.month_abrev(date)}"
-        return base_name + day_month + suffix
+        return f"MERGE_CPTEC_12Z{day_month}.nc"
+
+    @staticmethod
+    def MERGE_MA_filename(date: datetime):  # pylint: disable=invalid-name
+        """
+        Monthly Accumulated - Create the filename fot the Monthly Accumulated files from MERGE/INPE
+        E.g.: MERGE_CPTEC_acum_sep.nc
+        """
+        month_abrev = DateProcessor.month_abrev(date)
+        return f"MERGE_CPTEC_acum_{month_abrev}.nc"
 
     @staticmethod
     def grib2_post_proc(dset: xr.Dataset) -> xr.Dataset:
@@ -154,5 +149,12 @@ class INPEParsers:
         date_freq=DateFrequency.DAILY,
     )
 
-    parsers = [daily_rain_parser, monthly_accum_yearly, daily_average]
+    monthly_accum = BaseParser(
+        datatype=INPETypes.MONTHLY_ACUM,
+        root="/modelos/tempo/MERGE/GPM/CLIMATOLOGY/MONTHLY_ACCUMULATED/",
+        fn_creator=INPE.MERGE_MA_filename,
+        date_freq=DateFrequency.MONTHLY,
+    )
+
+    parsers = [daily_rain_parser, monthly_accum_yearly, daily_average, monthly_accum]
     post_processors = {".grib2": INPE.grib2_post_proc, ".nc": INPE.nc_post_proc}

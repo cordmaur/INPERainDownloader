@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from enum import Enum
 from typing import Callable, Optional, Union, List
+from dateutil import parser
 
 from .utils import DateProcessor, DateFrequency
 
@@ -31,13 +32,18 @@ class BaseParser:
 
     def filename(self, date_str: str) -> str:
         """Return just the filename given a date string"""
+        # get the datetime
+        date = parser.parse(date_str)
 
-        return self.fn_creator(date_str)
+        return self.fn_creator(date)
 
     def path(self, date_str: str) -> str:
         """Return just the base path given a date string"""
+        # get the datetime
+        date = parser.parse(date_str)
+
         if self.fl_creator:
-            return os.path.join(self.root, self.fl_creator(date_str))
+            return os.path.join(self.root, self.fl_creator(date))
         else:
             return self.root
 

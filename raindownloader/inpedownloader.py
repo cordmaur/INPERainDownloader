@@ -325,6 +325,16 @@ class Downloader:
             datatype=datatype,
         )
 
+    def open_file(self, file: Union[Path, str]) -> xr.Dataset:
+        """Open a file and apply the post processing, if existent"""
+        dset = xr.open_dataset(file)
+
+        file_format = Path(file).suffix
+        if file_format in self.post_processors:
+            dset = self.post_processors[file_format](dset)
+
+        return dset
+
     @staticmethod
     def _create_cube(
         files: List,
