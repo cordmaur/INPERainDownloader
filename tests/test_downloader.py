@@ -152,7 +152,7 @@ class TestDownloader:
             # inject a wrong date
             # dates.append("a010101")
 
-            files = self.downloader.download_files(
+            files = self.downloader.get_files(
                 dates=dates, local_folder=fixture_data["test_dir"]
             )
 

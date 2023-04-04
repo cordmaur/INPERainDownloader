@@ -9,7 +9,7 @@ Module with several utils used in raindownloader INPEraindownloader package
 import ftplib
 import os
 from pathlib import Path
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Tuple
 from enum import Enum, auto
 
 # from abc import ABC, abstractmethod
@@ -169,6 +169,35 @@ class GISUtil:
     """Helper class for basic GIS operations"""
 
     @staticmethod
+    def create_cube(
+        files: List,
+        # name_parser: Optional[Callable] = None,
+        dim_key: Optional[str] = "time",
+        # squeeze_dims: Optional[Union[List[str], str]] = None,
+    ) -> xr.Dataset:
+        """
+        Stack the images in the list as one XARRAY Dataset cube.
+        """
+
+        # first, check if name parser and dimension key are setted correctly
+        # if (name_parser is None) ^ (dim_key is None):
+        #     raise ValueError("If name parser or dim key is set, both must be setted.")
+
+        # set the stacked dimension name
+        dim = "time" if dim_key is None else dim_key
+
+        # create a cube with the files
+        data_arrays = [
+            xr.open_dataset(file).astype("float32")
+            for file in files
+            if Path(file).exists()
+        ]
+
+        cube = xr.concat(data_arrays, dim=dim)
+
+        return cube
+
+    @staticmethod
     def profile_from_xarray(array: xr.DataArray, driver: Optional[str] = "GTiff"):
         """Create a rasterio profile given an rioxarray"""
         profile = dict(
@@ -255,3 +284,17 @@ class DateProcessor:
             date = parser.parse(date)
 
         return date.strftime("%b").lower()
+
+    @staticmethod
+    def start_end_dates(date: Union[str, datetime.datetime]) -> Tuple[str, str]:
+        """Return the first date and last date in a specific month"""
+        if not isinstance(date, datetime.datetime):
+            date = parser.parse(date)
+
+        # get the number of days
+        _, days = calendar.monthrange(date.year, date.month)
+        first_day = datetime.datetime(date.year, date.month, 1)
+        last_day = first_day + datetime.timedelta(days=days - 1)
+        return DateProcessor.normalize_date(first_day), DateProcessor.normalize_date(
+            last_day
+        )

@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Callable, Optional, Union, List
 from dateutil import parser
 
-from .utils import DateProcessor, DateFrequency, FTPUtil
+from .utils import DateProcessor, DateFrequency, FTPUtil, OSUtil
 
 
 class BaseParser:
@@ -23,35 +23,31 @@ class BaseParser:
         fn_creator: Callable,
         fl_creator: Optional[Callable] = None,
         date_freq: DateFrequency = DateFrequency.DAILY,
+        ftp: Optional[FTPUtil] = None,
+        avoid_update: bool = True,
     ):
         self.datatype = datatype
         self.root = Path(root).as_posix()
         self.fn_creator = fn_creator
         self.fl_creator = fl_creator
         self.date_freq = date_freq
+        self._ftp = ftp
+        self.avoid_update = avoid_update
 
-    def download_file(
-        self, date_str: str, local_folder: Union[Path, str], ftp: FTPUtil
-    ) -> Path:
-        """
-        Download the parsed file to a local subfolder (according to the parser datatype).
-        OBS: Download file always force the download. Otherwise, use the `get_file` function
-        """
+    @property
+    def ftp(self):
+        """Retrieve the internal ftp object"""
+        if self._ftp is None:
+            raise ValueError(
+                f"FTPUtil instance not initialized in the parser {self.datatype}. \nSet it in .ftp."
+            )
+        else:
+            return self._ftp
 
-        # Download the file directly
-        downloaded_file = ftp.download_ftp_file(
-            remote_file=self.remote_target(date_str=date_str),
-            local_folder=self.local_path(local_folder=local_folder),
-        )
-
-        return downloaded_file
-
-    def filename(self, date_str: str) -> str:
-        """Return just the filename given a date string"""
-        # get the datetime
-        date = parser.parse(date_str)
-
-        return self.fn_creator(date)
+    @ftp.setter
+    def ftp(self, ftp: FTPUtil):
+        """Set internal ftp object"""
+        self._ftp = ftp
 
     @property
     def subfolder(self) -> str:
@@ -60,6 +56,14 @@ class BaseParser:
             return self.datatype.name
         else:
             return self.datatype
+
+    ### File/folder structure functions
+    def filename(self, date_str: str) -> str:
+        """Return just the filename given a date string"""
+        # get the datetime
+        date = parser.parse(date_str)
+
+        return self.fn_creator(date)
 
     def local_path(self, local_folder: Union[Path, str]) -> Path:
         """Create the local path based on the data type"""
@@ -94,4 +98,109 @@ class BaseParser:
         """Return the dates range within the specified period"""
         return DateProcessor.dates_range(
             start_date=start_date, end_date=end_date, date_freq=self.date_freq
+        )
+
+    ### Download functions
+    def download_file(self, date_str: str, local_folder: Union[Path, str]) -> Path:
+        """
+        Download the parsed file to a local subfolder (according to the parser datatype).
+        OBS: Download file always force the download. Otherwise, use the `get_file` function
+        """
+
+        # Download the file directly
+        downloaded_file = self.ftp.download_ftp_file(
+            remote_file=self.remote_target(date_str=date_str),
+            local_folder=self.local_path(local_folder=local_folder),
+        )
+
+        return downloaded_file
+
+    def is_downloaded(
+        self,
+        date_str: str,
+        local_folder: Union[str, Path],
+    ) -> bool:
+        """Compare remote and local files and return if they are equal"""
+
+        # create target to the local file
+        local_target = self.local_target(date_str=date_str, local_folder=local_folder)
+
+        # if the file does not exist, exit with false
+        if not local_target.exists():
+            return False
+
+        # if it exists locally and avoid update is True, we can confirm it is already downloaded
+        if self.avoid_update:
+            return True
+
+        ### Check if file has changed in the server
+        # create a string pointing to the remote file and get its info
+        remote_file = self.remote_target(date_str)
+
+        # Now we need to compare the remote and local files
+        local_info = OSUtil.get_local_file_info(local_target)
+
+        result = self.ftp.file_changed(remote_file=remote_file, file_info=local_info)
+
+        return result
+
+    def get_file(
+        self,
+        date_str: str,
+        local_folder: Union[str, Path],
+        force_download: bool = False,
+    ) -> Path:
+        """
+        Get a specific file. If it is not available locally, download it just in time.
+        If it is available locally and avoid_update is not True, check if the file has
+        changed in the server
+        """
+
+        if force_download or not self.is_downloaded(
+            date_str=date_str,
+            local_folder=local_folder,
+        ):
+            return self.download_file(date_str=date_str, local_folder=local_folder)
+
+        else:
+            return self.local_target(date_str=date_str, local_folder=local_folder)
+
+    def get_files(
+        self,
+        dates: List[str],
+        local_folder: Union[str, Path],
+        force_download: bool = False,
+    ) -> List[Path]:
+        """
+        Download files from a list of dates and receives a list pointing to the files.
+        If there is a problem during the download of one file, a message error will be in the list.
+        """
+        files = []
+        for date in dates:
+            files.append(
+                self.get_file(
+                    date_str=date,
+                    local_folder=local_folder,
+                    force_download=force_download,
+                )
+            )
+
+        return files
+
+    def get_range(
+        self,
+        start_date: str,
+        end_date: str,
+        local_folder: Union[str, Path],
+        force_download: bool = False,
+    ) -> List[Path]:
+        """
+        Download a range of files from start to end dates and receives a list pointing to the files.
+        If there is a problem during the download of one file, a message error will be in the list.
+        """
+        dates = self.dates_range(start_date, end_date)
+        return self.get_files(
+            dates=dates,
+            local_folder=local_folder,
+            force_download=force_download,
         )

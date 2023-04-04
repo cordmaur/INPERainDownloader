@@ -7,13 +7,12 @@ from enum import Enum
 from typing import Union, List, Optional
 
 # from abc import ABC, abstractmethod
-from datetime import timedelta, datetime
 
 import xarray as xr
 import rioxarray as xrio
 import rasterio as rio
 
-from .utils import DateProcessor, FTPUtil, OSUtil, FileType
+from .utils import FTPUtil, OSUtil, FileType, GISUtil
 from .inpeparser import INPETypes
 from .parser import BaseParser
 
@@ -29,11 +28,16 @@ class Downloader:
         post_processors: Optional[dict] = None,
     ) -> None:
 
-        self.ftp = FTPUtil(server)
-        self.parsers = parsers
-
         # Avoid checking for updates in the server everytime a file is requested
         self.avoid_update = avoid_update
+        self.ftp = FTPUtil(server)
+
+        self.parsers = parsers
+
+        # update the parsers with global configs
+        for parser in self.parsers:
+            parser.ftp = self.ftp
+            parser.avoid_update = self.avoid_update
 
         # functions to be applied to filetypes after they are loaded
         self.post_processors = {} if post_processors is None else post_processors
@@ -72,7 +76,7 @@ class Downloader:
         return filename
 
     @property
-    def data_types(self):
+    def data_types(self) -> List[Union[Enum, str]]:
         """Return the data types available in the parsers"""
         return [parse.datatype for parse in self.parsers]
 
@@ -80,32 +84,14 @@ class Downloader:
         self,
         date_str: str,
         local_folder: Union[str, Path],
-        datatype: Union[Enum, str],
-    ) -> bool:
-        """Compare remote and local files and return if they are equal"""
-
-        # create target to the local file
-        parser = self.get_parser(datatype)
-        local_target = parser.local_target(date_str=date_str, local_folder=local_folder)
-
-        # if the file does not exist, exit with false
-        if not local_target.exists():
-            return False
-
-        # if it exists locally and avoid update is True, we can confirm it is already downloaded
-        if self.avoid_update:
-            return True
-
-        ### Check if file has changed in the server
-        # create a string pointing to the remote file and get its info
-        remote_file = self.remote_file_path(date_str, datatype=datatype)
-
-        # Now we need to compare the remote and local files
-        local_info = OSUtil.get_local_file_info(local_target)
-
-        result = self.ftp.file_changed(remote_file=remote_file, file_info=local_info)
-
-        return result
+        datatype: Union[INPETypes, str],
+    ):
+        """Return if the desired file is downloaded. Dispatch to the correct parser"""
+        parser = self.get_parser(datatype=datatype)
+        return parser.is_downloaded(
+            date_str=date_str,
+            local_folder=local_folder,
+        )
 
     def compare_files(
         self,
@@ -177,9 +163,7 @@ class Downloader:
         downloaded again, unless it has been updated on the server.
         """
         parser = self.get_parser(datatype=datatype)
-        return parser.download_file(
-            date_str=date_str, local_folder=local_folder, ftp=self.ftp
-        )
+        return parser.download_file(date_str=date_str, local_folder=local_folder)
 
     def get_file(
         self,
@@ -193,97 +177,73 @@ class Downloader:
         If it is available locally and avoid_update is not True, check if the file has
         changed in the server
         """
+        parser = self.get_parser(datatype=datatype)
+        return parser.get_file(
+            date_str=date_str,
+            local_folder=local_folder,
+            force_download=force_download,
+        )
 
-        if force_download or not self.is_downloaded(
-            date_str=date_str, local_folder=local_folder, datatype=datatype
-        ):
-            return self.download_file(
-                date_str=date_str, local_folder=local_folder, datatype=datatype
-            )
-
-        else:
-            parser = self.get_parser(datatype)
-            return parser.local_target(date_str=date_str, local_folder=local_folder)
-
-    def download_files(
+    def get_files(
         self,
         dates: List[str],
         local_folder: Union[str, Path],
         datatype: Union[Enum, str],
-        file_type: FileType = FileType.GRIB,
-        force: bool = False,
+        force_download: bool = False,
     ) -> List[Path]:
         """
         Download files from a list of dates and receives a list pointing to the files.
         If there is a problem during the download of one file, a message error will be in the list.
         """
+        parser = self.get_parser(datatype=datatype)
+        return parser.get_files(
+            dates=dates, local_folder=local_folder, force_download=force_download
+        )
 
-        # before downloading the files, check if the local folder exists
-        if not Path(local_folder).exists():
-            raise FileNotFoundError(f"Folder not found: {local_folder}")
-
-        files = []
-        for date in dates:
-            # try:
-            files.append(
-                self.download_file(
-                    date_str=date,
-                    local_folder=local_folder,
-                    datatype=datatype,
-                )
-            )
-
-            # except Exception as error:  # pylint:disable=broad-except
-            #     files.append(f"Error {date}:  {error}")
-
-        return files
-
-    def download_range(
+    def get_range(
         self,
         start_date: str,
         end_date: str,
         local_folder: Union[str, Path],
         datatype: Union[Enum, str],
-        file_type: FileType = FileType.GRIB,
-        force: bool = False,
+        force_download: bool = False,
     ) -> List[Path]:
         """
         Download a range of files from start to end dates and receives a list pointing to the files.
         If there is a problem during the download of one file, a message error will be in the list.
         """
 
-        dates = self.get_parser(datatype).dates_range(start_date, end_date)
-        return self.download_files(
-            dates=dates,
+        parser = self.get_parser(datatype=datatype)
+        return parser.get_range(
+            start_date=start_date,
+            end_date=end_date,
             local_folder=local_folder,
-            file_type=file_type,
-            force=force,
-            datatype=datatype,
+            force_download=force_download,
         )
 
-    def download_recent(
-        self,
-        local_folder: Union[str, Path],
-        datatype: Union[Enum, str],
-        num: int = 1,
-    ) -> List[Path]:
-        """
-        Download the recent x files, where x is the number of files to download.
-        """
-        now = datetime.now()
+    # def download_recent(
+    #     self,
+    #     local_folder: Union[str, Path],
+    #     datatype: Union[Enum, str],
+    #     num: int = 1,
+    # ) -> List[Path]:
+    #     """
+    #     Download the recent x files, where x is the number of files to download.
+    #     """
+    #     now = datetime.now()
 
-        # testing what happens if today's not present yet
-        now = now + timedelta(days=1)
+    #     # testing what happens if today's not present yet
+    #     now = now + timedelta(days=1)
 
-        first_str = DateProcessor.normalize_date(now - timedelta(days=num - 1))
-        now_str = DateProcessor.normalize_date(now)
+    #     first_str = DateProcessor.normalize_date(now - timedelta(days=num - 1))
+    #     now_str = DateProcessor.normalize_date(now)
 
-        return self.download_range(
-            start_date=first_str,
-            end_date=now_str,
-            local_folder=local_folder,
-            datatype=datatype,
-        )
+    #     return self.get_range(
+    #         start_date=first_str,
+    #         end_date=now_str,
+    #         local_folder=local_folder,
+    #         datatype=datatype,
+    #     )
 
     def open_file(self, file: Union[Path, str]) -> xr.Dataset:
         """Open a file and apply the post processing, if existent"""
@@ -295,39 +255,10 @@ class Downloader:
 
         return dset
 
-    @staticmethod
-    def _create_cube(
-        files: List,
-        # name_parser: Optional[Callable] = None,
-        dim_key: Optional[str] = "time",
-        # squeeze_dims: Optional[Union[List[str], str]] = None,
-    ) -> xr.Dataset:
-        """
-        Stack the images in the list as one XARRAY Dataset cube.
-        """
-
-        # first, check if name parser and dimension key are setted correctly
-        # if (name_parser is None) ^ (dim_key is None):
-        #     raise ValueError("If name parser or dim key is set, both must be setted.")
-
-        # set the stacked dimension name
-        dim = "time" if dim_key is None else dim_key
-
-        # create a cube with the files
-        data_arrays = [
-            xr.open_dataset(file).astype("float32")
-            for file in files
-            if Path(file).exists()
-        ]
-
-        cube = xr.concat(data_arrays, dim=dim)
-
-        return cube
-
     def create_cube(self, files: list, dim_key: Optional[str] = "time") -> xr.Dataset:
         """Create a cube from the list of files and apply the post_processor of the downloader"""
 
-        cube = Downloader._create_cube(files=files, dim_key=dim_key)
+        cube = GISUtil._create_cube(files=files, dim_key=dim_key)
 
         file_format = Path(files[0]).suffix
         if file_format in self.post_processors:

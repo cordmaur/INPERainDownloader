@@ -294,7 +294,7 @@ class RainReporter:
         """Get the accumulated rain in a given period"""
 
         # download the files
-        files = self.downloader.download_range(
+        files = self.downloader.get_range(
             start_date=start_date,
             end_date=end_date,
             datatype=datatype,
