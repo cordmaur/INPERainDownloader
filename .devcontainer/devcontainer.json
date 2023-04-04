@@ -10,8 +10,8 @@
 		"source=/Users/cordmaur/Library/CloudStorage/OneDrive-AgênciaNacionaldeÁguas/Trabalho/SOE/COVEC/Bases,target=/workspaces/bases,type=bind"
 	],
 	"runArgs": [
-		"--memory=4g",
-		"--memory-swap=20g",
+		"--memory=8g",
+		"--memory-swap=32g",
 		"--oom-kill-disable"
 	],
 	"postCreateCommand": "pip install -e .",
