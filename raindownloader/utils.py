@@ -17,7 +17,6 @@ import datetime
 import calendar
 
 from dateutil import parser
-import pytz
 
 import xarray as xr
 
@@ -82,15 +81,15 @@ class FTPUtil:
         self,
         remote_file: str,
         local_folder: Union[str, Path],
-        remote_tz_str: str = "GMT",
-        local_tz_str: str = "Brazil/East",
+        # remote_tz_str: str = "GMT",
+        # local_tz_str: str = "Brazil/East",
         alt_server: Optional[str] = None,
     ) -> Path:
         """Download an ftp file preserving filename and timestamps"""
 
         # to start, check if the timezones are valid
-        remote_tz = pytz.timezone(remote_tz_str)
-        local_tz = pytz.timezone(local_tz_str)
+        # remote_tz = pytz.timezone(remote_tz_str)
+        # local_tz = pytz.timezone(local_tz_str)
 
         # get a valid connection
         ftp = self.get_connection(alt_server=alt_server)
@@ -108,9 +107,10 @@ class FTPUtil:
         remote_time = parser.parse(remote_time_str[4:])
 
         # correct the timestamp
-        local_time = remote_tz.localize(remote_time).astimezone(local_tz)
+        # local_time = remote_tz.localize(remote_time).astimezone(local_tz)
 
-        timestamp = local_time.timestamp()
+        # timestamp = local_time.timestamp()
+        timestamp = remote_time.timestamp()
         os.utime(local_path, (timestamp, timestamp))
 
         return local_path
@@ -118,14 +118,9 @@ class FTPUtil:
     def get_ftp_file_info(
         self,
         remote_file: str,
-        remote_tz_str: str = "GMT",
-        local_tz_str: str = "Brazil/East",
         alt_server: Optional[str] = None,
     ) -> dict:
         """Get modification time and size of a specific file in the FTP server"""
-        # to start, check if the timezones are valid
-        remote_tz = pytz.timezone(remote_tz_str)
-        local_tz = pytz.timezone(local_tz_str)
 
         # get a valid connection
         ftp = self.get_connection(alt_server=alt_server)
@@ -134,14 +129,40 @@ class FTPUtil:
         remote_time = parser.parse(remote_time_str[4:])
 
         # correct the timestamp
-        local_time = remote_tz.localize(remote_time).astimezone(local_tz)
         size = ftp.size(remote_file)
 
-        return {"datetime": local_time, "size": size}
+        return {"datetime": remote_time, "size": size}
 
     def __repr__(self) -> str:
         output = f"FTP {'' if self.is_connected else 'Not '}connected to server {self.ftp.host}"
         return output
+
+    def file_exists(self, remote_file: str) -> bool:
+        """Docstring"""
+
+        try:
+            self.ftp.size(remote_file)
+
+        except ftplib.error_perm as error:
+            if str(error).startswith("550"):
+                print("File does not exists")
+            else:
+                print(f"Error checking file existence: {error}")
+            return False
+
+        return True
+
+    def file_changed(self, remote_file: str, file_info: dict) -> bool:
+        """
+        Check if the remote file has changed based in the size and datetime values
+        within file_info dict
+        """
+
+        remote_info = self.get_ftp_file_info(remote_file=remote_file)
+
+        return (remote_info["size"] == file_info["size"]) and (
+            remote_info["datetime"] == file_info["datetime"]
+        )
 
 
 class GISUtil:
@@ -168,19 +189,13 @@ class OSUtil:
     """Helper class for OS related functions"""
 
     @staticmethod
-    def get_local_file_info(
-        file_path: Union[str, Path], local_tz_str="Brazil/East"
-    ) -> dict:
+    def get_local_file_info(file_path: Union[str, Path]) -> dict:
         """Get the size and modification time of a local file"""
-
-        # create the local timezone object
-        local_tz = pytz.timezone(local_tz_str)
 
         # get the status of the file
         stat = Path(file_path).stat()
 
-        # parse the date correctly
-        local_dt = local_tz.localize(datetime.datetime.fromtimestamp(stat.st_mtime))
+        local_dt = datetime.datetime.fromtimestamp(stat.st_mtime)
 
         return {"datetime": local_dt, "size": stat.st_size}
 

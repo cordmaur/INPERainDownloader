@@ -1,8 +1,7 @@
 """
 Module with specialized classes to understand the INPE FTP Structure
 """
-import ftplib
-import os
+
 from pathlib import Path
 from enum import Enum
 from typing import Union, List, Optional
@@ -75,46 +74,38 @@ class Downloader:
     @property
     def data_types(self):
         """Return the data types available in the parsers"""
-        return [parse.type for parse in self.parsers]
+        return [parse.datatype for parse in self.parsers]
 
     def is_downloaded(
         self,
         date_str: str,
         local_folder: Union[str, Path],
         datatype: Union[Enum, str],
-        check_for_update=False,
     ) -> bool:
         """Compare remote and local files and return if they are equal"""
-        # create a string pointing to the remote file and get its info
-        remote_file = self.remote_file_path(date_str, datatype=datatype)
-        remote_info = self.ftp.get_ftp_file_info(remote_file=remote_file)
 
-        # create the local_file path always pointing to the .GRIB!!!!
-        local_file = self.local_file_path(
-            date_str,
-            local_folder,
-            datatype=datatype,  # file_type=FileType.GRIB
-        )
+        # create target to the local file
+        parser = self.get_parser(datatype)
+        local_target = parser.local_target(date_str=date_str, local_folder=local_folder)
 
         # if the file does not exist, exit with false
-        if not local_file.exists():
+        if not local_target.exists():
             return False
 
-        if check_for_update:
-            local_info = OSUtil.get_local_file_info(local_file)
+        # if it exists locally and avoid update is True, we can confirm it is already downloaded
+        if self.avoid_update:
+            return True
 
-            # first, check the names
-            if os.path.basename(remote_file) != os.path.basename(local_file):
-                return False
+        ### Check if file has changed in the server
+        # create a string pointing to the remote file and get its info
+        remote_file = self.remote_file_path(date_str, datatype=datatype)
 
-            remote_info = self.ftp.get_ftp_file_info(remote_file=remote_file)
-            local_info = OSUtil.get_local_file_info(local_file)
+        # Now we need to compare the remote and local files
+        local_info = OSUtil.get_local_file_info(local_target)
 
-            return (remote_info["size"] == local_info["size"]) and (
-                remote_info["datetime"] == local_info["datetime"]
-            )
+        result = self.ftp.file_changed(remote_file=remote_file, file_info=local_info)
 
-        return True
+        return result
 
     def compare_files(
         self,
@@ -134,55 +125,35 @@ class Downloader:
     def get_parser(self, datatype: Union[Enum, str]) -> BaseParser:
         """Get the correct parser for the specified datatype"""
         for parser in self.parsers:
-            if parser.type == datatype:
+            if parser.datatype == datatype:
                 return parser
 
         raise ValueError(f"Parser not found for data type {datatype}")
 
     def remote_file_path(self, date_str: str, datatype: Union[Enum, str]) -> str:
         """Create the remote file path given a date"""
-        # filename = self.filename_fn(date_str)
-        # folder = self.structure_fn(date_str)
-
-        # return "/".join([self.root, folder, filename])
         parser = self.get_parser(datatype=datatype)
 
-        return parser.target(date_str=date_str)
+        return parser.remote_target(date_str=date_str)
 
     def remote_file_exists(self, date_str: str, datatype: Union[Enum, str]) -> bool:
-        """Docstring"""
+        """Check if a remote file exists"""
 
-        remote_path = self.remote_file_path(date_str, datatype=datatype)
-        try:
-            self.ftp.ftp.size(remote_path)
-
-        except ftplib.error_perm as error:
-            if str(error).startswith("550"):
-                print("File does not exists")
-            else:
-                print(f"Error checking file existence: {error}")
-            return False
-
-        return True
+        remote_file = self.remote_file_path(date_str, datatype=datatype)
+        return self.ftp.file_exists(remote_file=remote_file)
 
     def local_file_path(
         self,
         date_str: str,
         local_folder: Union[str, Path],
         datatype: Union[Enum, str],
-        # file_type: FileType = FileType.GRIB,
     ) -> Path:
         """
         Create the path for the local file, depending on the folder and file type.
         It uses the filename function to derive the final filename.
         """
         parser = self.get_parser(datatype=datatype)
-        filename = Path(parser.filename(date_str))
-
-        # if file_type is not None:
-        #     filename = filename.with_suffix(file_type.value)
-
-        return Path(local_folder) / filename
+        return parser.local_target(date_str=date_str, local_folder=local_folder)
 
     def files_range(
         self, start_date_str: str, end_date_str: str, datatype: Union[INPETypes, str]
@@ -198,50 +169,41 @@ class Downloader:
         date_str: str,
         local_folder: Union[str, Path],
         datatype: Union[Enum, str],
-        file_type: Optional[FileType] = None,
-        force: bool = False,
     ) -> Path:
         """
         Download a file from the FTP server to the a local folder. The filename and ftp location
-        folder filename will be obtained from the functions filename_fn and structure_fn
-        respectively.
+        folder filename will be obtained from the respective parsers.
         The result will be the local path for the file. If file already exists, it will not be
         downloaded again, unless it has been updated on the server.
         """
-        # get the file locations
-        remote_file = self.remote_file_path(date_str, datatype=datatype)
-        local_file = self.local_file_path(
-            date_str, local_folder, datatype=datatype  # , file_type=file_type
+        parser = self.get_parser(datatype=datatype)
+        return parser.download_file(
+            date_str=date_str, local_folder=local_folder, ftp=self.ftp
         )
 
-        # check if file exists
-        downloaded_file = None
-        if local_file.exists() and not force:
-            # check if they are the same
-            if self.avoid_update or self.is_downloaded(
-                date_str, local_file.parent, datatype=datatype
-            ):
-                pass
-                # print(
-                #     f"file {local_file.with_suffix(FileType.GRIB.value)} already exists."
-                # )
-            else:
-                print(f"Local file {local_file} is outdated. Downloading it.")
-                downloaded_file = self.ftp.download_ftp_file(
-                    remote_file, local_file.parent
-                )
-        else:
-            downloaded_file = self.ftp.download_ftp_file(remote_file, local_file.parent)
+    def get_file(
+        self,
+        date_str: str,
+        local_folder: Union[str, Path],
+        datatype: Union[Enum, str],
+        force_download: bool = False,
+    ) -> Path:
+        """
+        Get a specific file. If it is not available locally, download it just in time.
+        If it is available locally and avoid_update is not True, check if the file has
+        changed in the server
+        """
 
-        # next step is to convert it to GeoTiff if necessary
-        # if geotiff is demanded we convert in following situations:
-        # new.grib was downloaded or local_file (.tif) is inexistent.
-        if file_type == FileType.GEOTIFF and (
-            (downloaded_file is not None) or (not local_file.exists())
+        if force_download or not self.is_downloaded(
+            date_str=date_str, local_folder=local_folder, datatype=datatype
         ):
-            Downloader.grib2tif(local_file.with_suffix(FileType.GRIB.value))
+            return self.download_file(
+                date_str=date_str, local_folder=local_folder, datatype=datatype
+            )
 
-        return local_file
+        else:
+            parser = self.get_parser(datatype)
+            return parser.local_target(date_str=date_str, local_folder=local_folder)
 
     def download_files(
         self,
@@ -268,8 +230,6 @@ class Downloader:
                     date_str=date,
                     local_folder=local_folder,
                     datatype=datatype,
-                    file_type=file_type,
-                    force=force,
                 )
             )
 

@@ -24,7 +24,8 @@ class INPETypes(Enum):
     DAILY_RAIN = "prec"
     MONTHLY_ACCUM_YEARLY = "pacum"
     DAILY_AVERAGE = "pmed"
-    MONTHLY_ACUM = "precacum"
+    MONTHLY_ACCUM = "precacum"
+    MONTHLY_ACCUM_MANUAL = "monthacum"
 
 
 class INPE:
