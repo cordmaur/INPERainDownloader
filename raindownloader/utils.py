@@ -17,6 +17,7 @@ import datetime
 import calendar
 
 from dateutil import parser
+from dateutil.relativedelta import relativedelta
 
 import xarray as xr
 
@@ -244,6 +245,16 @@ class DateProcessor:
         return date.strftime("%Y%m%d")
 
     @staticmethod
+    def as_datetime(date: Union[str, datetime.datetime]) -> datetime.datetime:
+        """
+        Return the date as datetime
+        """
+        if not isinstance(date, datetime.datetime):
+            date = parser.parse(date)
+
+        return date
+
+    @staticmethod
     def pretty_date(date: Union[str, datetime.datetime]) -> str:
         """Return the date in a pretty printable format dd/mm/yyyy"""
         if not isinstance(date, datetime.datetime):
@@ -298,3 +309,22 @@ class DateProcessor:
         return DateProcessor.normalize_date(first_day), DateProcessor.normalize_date(
             last_day
         )
+
+    @staticmethod
+    def last_n_months(
+        date: Union[str, datetime.datetime], lookback: int = 6
+    ) -> Tuple[str, str]:
+        """
+        Return start and end month considering the month of the given date and
+        looking back n months
+        """
+
+        if not isinstance(date, datetime.datetime):
+            date = parser.parse(date)
+
+        start_date = date - relativedelta(months=lookback - 1)
+
+        start_date_str = f"{start_date.year}-{start_date.month}"
+        end_date_str = f"{date.year}-{date.month}"
+
+        return (start_date_str, end_date_str)

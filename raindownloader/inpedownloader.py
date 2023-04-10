@@ -258,7 +258,7 @@ class Downloader:
     def create_cube(self, files: list, dim_key: Optional[str] = "time") -> xr.Dataset:
         """Create a cube from the list of files and apply the post_processor of the downloader"""
 
-        cube = GISUtil._create_cube(files=files, dim_key=dim_key)
+        cube = GISUtil.create_cube(files=files, dim_key=dim_key)
 
         file_format = Path(files[0]).suffix
         if file_format in self.post_processors:

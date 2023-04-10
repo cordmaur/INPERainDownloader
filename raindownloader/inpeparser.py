@@ -72,7 +72,7 @@ class INPE:
         return f"MERGE_CPTEC_acum_{month_year}.nc"
 
     @staticmethod
-    def MERGE_daily_average_filename(  # pylint: disable=invalid-name
+    def MERGE_daily_average_filename(
         date: datetime,
     ) -> str:  # pylint: disable=invalid-name
         """
@@ -163,8 +163,15 @@ class MonthAccumParser(BaseParser):
 
         dset = GISUtil.create_cube(files=daily_files, dim_key="time")
         cube = INPE.grib2_post_proc(dset)
+
+        # get the reference datetime
+        ref_time = cube.time[0].values
+
         accum = cube[INPETypes.DAILY_RAIN.value].sum(dim="time")
         accum = accum.rename(INPETypes.MONTHLY_ACCUM_MANUAL.value)
+
+        # once the reduction is being done in the time dimension, create a new dimension for time
+        accum = accum.assign_coords({"time": ref_time}).expand_dims(dim="time")
 
         # save the file to disk
         target_file = self.local_target(date_str=date_str, local_folder=local_folder)

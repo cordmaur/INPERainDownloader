@@ -39,7 +39,9 @@ class RainReporter:
         post_processors: Optional[dict] = INPEParsers.post_processors,
     ):  # pylint: disable=dangerous-default-value
         self.downloader = Downloader(
-            server=server, parsers=parsers, post_processors=post_processors
+            server=server,
+            parsers=parsers,
+            post_processors=post_processors,
         )
 
         self.cities = gpd.read_file("../data/cities/cidades.shp")
@@ -139,7 +141,7 @@ class RainReporter:
         return series
 
     @staticmethod
-    def plot_monthly_rain(
+    def plot_monthly_rain_gutto(
         plt_ax: plt.Axes,
         cube: xr.DataArray,
         shp: gpd.GeoDataFrame,
@@ -190,12 +192,18 @@ class RainReporter:
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
         cmap: Optional[Union[str, colors.Colormap]] = None,
+        diverging: bool = False,
     ):
         """Add a colorbar to the given axes based on the values of the raster"""
 
         # First, set the minimum and maximum limits
-        vmin = float(raster.min()) if vmin is None else vmin
-        vmax = float(raster.max()) * 0.8 if vmax is None else vmax
+        if not diverging:
+            vmin = float(raster.min()) if vmin is None else vmin
+            vmax = float(raster.max()) * 0.8 if vmax is None else vmax
+        else:
+            if vmax is None or vmin is None:
+                vmax = max(abs(float(raster.max())), abs(float(raster.min())))
+                vmin = -vmax
 
         # if no cmap is defined, use the INPE version
         cmap = INPE.cmap if cmap is None else cmap
@@ -215,18 +223,20 @@ class RainReporter:
     @staticmethod
     def plot_raster_shape(
         raster: xr.DataArray,
-        shape: gpd.GeoDataFrame,
+        shp: gpd.GeoDataFrame,
         plt_ax: plt.Axes,
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
         cmap: Optional[Union[str, colors.Colormap]] = None,
+        diverging: bool = False,
     ):
         """
         Given a time period and a shapefile (loaded in geopandas),
         plot the raster within the shape.
+        If diverging is True, the scale will go from -max(abs) to +max(abs)
         """
 
-        shape.plot(
+        shp.plot(
             ax=plt_ax,
             figsize=(5, 5),
             alpha=1,
@@ -247,7 +257,6 @@ class RainReporter:
         # create a memory file and use it to create a memory dataset
         with rio.MemoryFile() as memfile:
             with memfile.open(**profile) as memdset:
-
                 # write the data to the newly created dataset
                 memdset.write(subraster)
 
@@ -260,6 +269,7 @@ class RainReporter:
                 vmin=vmin,
                 vmax=vmax,
                 cmap=cmap,
+                diverging=diverging,
             )
 
             # if no cmap is defined, use the INPE version
@@ -299,7 +309,6 @@ class RainReporter:
             end_date=end_date,
             datatype=datatype,
             local_folder=self.download_folder,
-            # file_type=FileType.GEOTIFF,
         )
 
         # create a cube
@@ -383,6 +392,35 @@ class RainReporter:
 
         self.states.plot(ax=plt_ax, facecolor="none", linewidth=0.6, edgecolor="gray")
 
+    def plot_anomaly_map(
+        self, date: str, shp: gpd.GeoDataFrame, plt_ax: plt.Axes
+    ) -> None:
+        """Plot the anomaly map in a given month"""
+
+        # get the raster for the accumulated rain in the month
+        rain = self.get_cube(
+            start_date=date, end_date=date, datatype=INPETypes.MONTHLY_ACCUM_MANUAL
+        ).squeeze()
+
+        # get the rater for the long term average in the same month
+        lta = self.get_cube(
+            start_date=date, end_date=date, datatype=INPETypes.MONTHLY_ACCUM
+        ).squeeze()
+
+        # make sure we are comparing the same months
+        assert (
+            pd.to_datetime(rain.time.values).month
+            == pd.to_datetime(lta.time.values).month
+        )
+
+        # create the anomaly raster
+        anomaly = rain.copy()
+        anomaly.data = rain.data - lta.data
+
+        RainReporter.plot_raster_shape(
+            raster=anomaly, shp=shp, plt_ax=plt_ax, cmap="bwr_r", diverging=True
+        )
+
     def daily_rain_report(
         self,
         start_date: str,
@@ -419,7 +457,7 @@ class RainReporter:
         fig.suptitle(Path(shapefile).stem, fontsize=16)
 
         ### Plot the map with the accumulated rain
-        self.plot_raster_shape(raster=rain, shape=shp, plt_ax=rep_axs[1])
+        self.plot_raster_shape(raster=rain, shp=shp, plt_ax=rep_axs[1])
 
         ### Add cities and state boundaries
         self.plot_cities(plt_ax=rep_axs[1])
@@ -468,6 +506,69 @@ class RainReporter:
         RainReporter.write_tabular_info(plt_ax=rep_axs[0], stats=rain_stats)
 
         return rep_axs, rain, shp, cube
+
+    def monthly_anomaly_report(
+        self,
+        date_str: str,
+        shapefile: Union[str, Path],
+        month_lbk: int = 7,
+    ):
+        """Docstring"""
+
+        ### Create the layout for the report using Matplotlib Gridspec
+        fig, rep_axs = RainReporter.create_report_layout()
+        fig.suptitle(Path(shapefile).stem, fontsize=16)
+
+        ### Open the cubes
+        # get the period to be considered
+        date = DateProcessor.as_datetime(date_str)
+        start_month, end_month = DateProcessor.last_n_months(
+            f"{date.year}-{date.month}", month_lbk
+        )
+        # get the rain
+        rain = self.get_cube(
+            start_month, end_month, datatype=INPETypes.MONTHLY_ACCUM_MANUAL
+        )
+        # get the long term average
+        lta = self.get_cube(start_month, end_month, datatype=INPETypes.MONTHLY_ACCUM)
+
+        ### open the shapefile
+        shp = gpd.read_file(shapefile)
+        if shp.crs is None:
+            shp = shp.set_crs("epsg:3857")
+
+        shp = shp.to_crs(rain.rio.crs)
+
+        ### plot the anomaly raster
+        self.plot_anomaly_map(date=date_str, shp=shp, plt_ax=rep_axs[1])
+
+        ### Add cities and state boundaries
+        self.plot_cities(plt_ax=rep_axs[1])
+        self.plot_states(plt_ax=rep_axs[1])
+
+        ### Plot chart
+        # get the time series of the monthly rain
+        rain_ts = RainReporter.get_time_series(
+            cube=rain, shp=shp, reducer=xr.DataArray.mean, keep_dim="time"
+        )
+
+        lta_ts = RainReporter.get_time_series(
+            cube=lta, shp=shp, reducer=xr.DataArray.mean, keep_dim="time"
+        )
+
+        # put everything into a dataframe
+        dframe = pd.DataFrame(rain_ts)
+        dframe["lta"] = lta_ts.values
+
+        # reset the index just to convert it to string
+        dframe.reset_index(inplace=True)
+        dframe["time"] = dframe["time"].astype("str")
+        dframe.index = pd.Index(dframe["time"].str[:7])
+
+        rep_axs[-1].bar(dframe.index, dframe["monthacum"])
+        rep_axs[-1].plot(dframe.index, dframe["lta"], color="orange", marker="x")
+
+        return rep_axs, rain, lta, shp
 
     @staticmethod
     def animate_cube(
