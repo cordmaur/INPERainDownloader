@@ -1,5 +1,5 @@
 from setuptools import setup, find_packages
-from raindownloader import version
+from raindownloader import __version__ as version
 
 setup(
     name="INPERainDownloader",

@@ -1,31 +1,21 @@
 """
 Tests for the INPEDownloader classes
 """
-import os
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 import pytest
 
-from raindownloader.utils import FileType, DateProcessor
-from raindownloader.inpeparser import INPE
-from raindownloader.inpedownloader import Downloader
+from raindownloader.downloader import Downloader
+from raindownloader.inpeparser import INPEParsers, INPETypes
 
 
 class TestDownloader:
-    """Test the INPE downloader class"""
-
-    downloader = Downloader(
-        server=INPE.FTPurl,
-        root=INPE.DailyMERGEroot,
-        filename_fn=INPE.MERGE_filename,
-        structure_fn=INPE.MERGE_structure,
-    )
+    """Docstring"""
 
     @pytest.fixture(scope="session")
     def fixture_data(self):
         """Return the test data for the tests"""
         data = {
-            "test_dir": "./tests/data",
             "test_date": "2023-03-01",
             "end_date": "2023-03-03",
             "correct_structure": "2023/03",
@@ -35,140 +25,96 @@ class TestDownloader:
         }
         return data
 
-    def test_init(self):
-        """Test the initialization of the class"""
+    downloader = Downloader(
+        server=INPEParsers.FTPurl,
+        parsers=INPEParsers.parsers,
+        local_folder="./tests/data",
+        post_processors=INPEParsers.post_processors,
+    )
 
-        # create a downloader
-        assert isinstance(self.downloader, Downloader)
+    @patch("raindownloader.downloader.FTPUtil")
+    def test_init(self, _):
+        """Test Downloader initialization"""
+        # create the instance
+        downloader = Downloader(
+            server="ftp.example.com",
+            parsers=INPEParsers.parsers,
+            local_folder="data",
+            avoid_update=True,
+            post_processors=None,
+        )
+
+        # assert instance variables
+        assert isinstance(downloader.ftp, MagicMock)
+        assert isinstance(downloader.parsers, list)
+        assert isinstance(downloader.local_folder, Path)
+        assert isinstance(downloader.avoid_update, bool)
+        assert isinstance(downloader.post_processors, dict)
+
+        # assert parsers initialization
+        for parser in downloader.parsers:
+            assert parser.ftp == downloader.ftp
+            assert parser.avoid_update == downloader.avoid_update
+            assert parser.datatype in downloader.data_types
+
+    def test_cut_cube_by_geoms(self):
+        """Test Downloader cut_cube_by_geoms method"""
+        # create mocks
+        mock_cube = MagicMock()
+        mock_geoms = MagicMock()
+
+        # call the method
+        Downloader.cut_cube_by_geoms(mock_cube, mock_geoms)
+
+        # assert calls were done correctly
+        assert mock_geoms.to_crs.called
+        assert mock_cube.rio.clip.called
+
+    def test_get_parser(self):
+        """Test the get_parser function"""
+        for parser in self.downloader.parsers:
+            assert parser == self.downloader.get_parser(parser.datatype)
+
+    def test_get_time_series(self):
+        """Test Downloader get_time_series method"""
+        # create mocks
+        mock_cube = MagicMock()
+        mock_shp = MagicMock()
+        mock_reducer = MagicMock()
+
+        mock_cube.dims = ["time", "longitude"]
+
+        # call the method
+        Downloader.get_time_series(mock_cube, mock_shp, mock_reducer)
+
+        # assert calls
+        assert mock_cube.rio.clip.called
+        assert mock_reducer.called
 
     def test_is_downloaded(self, fixture_data):
         """Test if a specific date is already downloaded and updated"""
 
         test_dates = [fixture_data["test_date"], fixture_data["end_date"], "20230302"]
-        results = [True, False, False]
+        results = [True, True, False]
         for date, result in zip(test_dates, results):
-            assert (
-                self.downloader.is_downloaded(
-                    date, fixture_data["test_dir"], check_for_update=True
-                )
-                == result
+            is_down = self.downloader.is_downloaded(
+                date_str=date,
+                datatype=INPETypes.DAILY_RAIN,
             )
+            assert is_down == result
 
-    def test_remote_file_path(self, fixture_data):
-        """Test if remote file path is being created correctly"""
+    # @patch("raindownloader.utils.FTPUtil.download_ftp_file")
+    # def test_download_file(self, mock_download_ftp, fixture_data):
+    #     """Test the download file method with a mock to avoid actual download"""
 
-        # create a target to the remote file
-        rfp = self.downloader.remote_file_path(date_str=fixture_data["test_date"])
+    #     f = Path("")
+    #     mock_download_ftp.return_value = f
 
-        # use test data to reproduce the same target
-        correct_rfp = os.path.join(
-            INPE.DailyMERGEroot,
-            fixture_data["correct_structure"],
-            fixture_data["correct_filename"],
-        )
+    #     downloaded_file = self.downloader.download_file(
+    #         date_str=fixture_data["test_date"],
+    #         datatype=INPETypes.DAILY_RAIN,
+    #     )
 
-        assert rfp == correct_rfp
-
-    def test_local_file_path(self, fixture_data):
-        """Test if local file path is being created correctly"""
-
-        # test with both possible extensions
-        for ext in FileType:
-
-            filepath = self.downloader.local_file_path(
-                date_str=fixture_data["test_date"],
-                local_folder=fixture_data["test_dir"],
-                file_type=ext,
-            )
-            assert filepath.exists()
-            assert filepath.suffix == ext.value
-
-    def test_download_file(self, fixture_data):
-        """Test the download file method with a mock to avoid actual download"""
-
-        # first test... by passing the default dir, the files already exists and mock
-        # should not be called
-        for ext in FileType:
-            with patch("raindownloader.utils.FTPUtil.download_ftp_file") as ftp_mock:
-                downloaded_file = self.downloader.download_file(
-                    date_str=fixture_data["test_date"],
-                    local_folder=fixture_data["test_dir"],
-                    file_type=ext,
-                    force=False,
-                )
-
-                assert downloaded_file == self.downloader.local_file_path(
-                    date_str=fixture_data["test_date"],
-                    local_folder=fixture_data["test_dir"],
-                    file_type=ext,
-                )
-
-                # the important thing here is to ckec if it has been called
-                assert not ftp_mock.called
-                assert isinstance(downloaded_file, Path)
-                assert downloaded_file.suffix == ext.value
-
-        # now, we will call forcing the download, both download and grib2tiff must be called
-        with patch(
-            "raindownloader.inpedownloader.INPEDownloader.grib2tif"
-        ) as grib2tif_mock, patch(
-            "raindownloader.utils.FTPUtil.download_ftp_file"
-        ) as ftp_mock:
-            downloaded_file = self.downloader.download_file(
-                date_str=fixture_data["test_date"],
-                local_folder=fixture_data["test_dir"],
-                file_type=FileType.GEOTIFF,
-                force=True,
-            )
-
-            # assert both mocks have been called
-            # assert self.downloader.ftp.download_ftp_file.called
-            assert isinstance(downloaded_file, Path)
-            assert ftp_mock.called
-            assert grib2tif_mock.called
-
-    def test_download_files(self, fixture_data):
-        """
-        Test the download_files function, mocking the ftp request
-        """
-
-        # to test this function we are going to pass a known number of dates to be downloaded
-        # one of the dates will not be existent, so it will have to skip it correctly
-
-        def download_mock_logic(**kwargs):
-            return self.downloader.local_file_path(
-                date_str=kwargs["date_str"], local_folder=fixture_data["test_dir"]
-            )
-
-        with patch(
-            "raindownloader.inpedownloader.INPEDownloader.download_file",
-            wraps=download_mock_logic,
-        ):
-
-            dates = DateProcessor.dates_range(
-                start_date=fixture_data["test_date"], end_date=fixture_data["end_date"]
-            )
-
-            # inject a wrong date
-            # dates.append("a010101")
-
-            files = self.downloader.get_files(
-                dates=dates, local_folder=fixture_data["test_dir"]
-            )
-
-            assert len(files) == len(dates)
-
-            # the last file should be an error message
-            # assert str(files.pop()).startswith("Error ")
-
-            for file in files:
-                assert isinstance(file, Path)
-
-    def test_download_range(self, fixture_data):
-        """
-        Test just the overall logic of download_range method, without actually
-        downloading the files.
-        """
-
-    def test_grib2tiff(self):
-        """docstring"""
+    #     # assert download called and Path type was not modified
+    #     assert mock_download_ftp.called
+    #     assert downloaded_file == f

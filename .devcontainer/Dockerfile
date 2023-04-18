@@ -1,12 +1,15 @@
-# Use an official GDAL image as the base image
-FROM osgeo/gdal:ubuntu-small-latest
+FROM cordmaur/raindownloader:v1
 
-# install pip
-RUN apt-get update && apt-get -y install python3-pip --fix-missing
-RUN apt-get -y install git
-RUN apt-get -y install libeccodes0 libeccodes-dev
-RUN pip install geopandas rioxarray matplotlib notebook ipykernel contextily \
-    netCDF4 cfgrib eccodes adjustText pytest --no-cache-dir
+
+# # Use an official GDAL image as the base image
+# FROM osgeo/gdal:ubuntu-small-latest
+
+# # install pip
+# RUN apt-get update && apt-get -y install python3-pip --fix-missing
+# RUN apt-get -y install git
+# RUN apt-get -y install libeccodes0 libeccodes-dev
+# RUN pip install geopandas rioxarray matplotlib notebook ipykernel contextily \
+#     netCDF4 cfgrib eccodes adjustText pytest --no-cache-dir
 
 # FROM ubuntu:20.04
 # ENV    CPLUS_INCLUDE_PATH=/usr/include/gdal

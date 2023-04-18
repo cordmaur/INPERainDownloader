@@ -4,7 +4,7 @@ import geopandas as gpd
 import contextily as cx
 
 from raindownloader.inpe import INPE
-from raindownloader.inpedownloader import Downloader
+from raindownloader.downloader import Downloader
 from raindownloader.utils import FileType
 from rainreporter.reporter import RainReporter
 
@@ -39,7 +39,6 @@ profile = GISUtil.profile_from_xarray(rain_basins)
 
 with rio.MemoryFile() as memfile:
     with memfile.open(**profile) as memdset:
-
         # write the data to the newly created dataset
         memdset.write(rain_basins)
 

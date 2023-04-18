@@ -14,7 +14,19 @@ from .utils import DateProcessor, DateFrequency, FTPUtil, OSUtil
 
 
 class BaseParser:
-    """Docstring"""
+    """
+    This class implements a Base Parser that is responsible for getting to the
+    desired file and downloading it. For that, we should provide:
+
+    datatype: To which type this data refers to. This can be a string (e.g., 'MonthlyAverage')
+    root: The root folder in the FTP that stores this data (e.g., /modelos/tempo/MERGE/GPM/CLIMATOLOGY/MONTHLY_AVERAGE/)
+    fn_creator: This is the FileName creator. This function is responsible for getting a datetime
+                and providing the target filename, for example: MERGE_CPTEC_mean_apr.nc
+    fl_creator: This is the Folder creator. This funciton is responsible for getting a date string
+                and providing the target folder, when it has sub-structures, for example:
+                '/DAILY/2001/02/' in the case of Daily rain
+    date_freq: The frequency of the file. DateFrequency.[DAILY, MONTHLY, YEARLY]
+    """
 
     def __init__(
         self,
@@ -25,6 +37,7 @@ class BaseParser:
         date_freq: DateFrequency = DateFrequency.DAILY,
         ftp: Optional[FTPUtil] = None,
         avoid_update: bool = True,
+        post_proc: Optional[Callable] = None,
     ):
         self.datatype = datatype
         self.root = Path(root).as_posix()
@@ -33,6 +46,7 @@ class BaseParser:
         self.date_freq = date_freq
         self._ftp = ftp
         self.avoid_update = avoid_update
+        self.post_proc = post_proc
 
     @property
     def ftp(self):

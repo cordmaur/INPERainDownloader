@@ -6,8 +6,8 @@ from datetime import datetime
 from socket import gaierror
 import ftplib
 import pytest
-from raindownloader.utils import FTPUtil
-from raindownloader.inpe import INPE
+from raindownloader.utils import FTPUtil, OSUtil
+from raindownloader.inpeparser import INPEParsers
 
 
 class TestFTPUtil:
@@ -17,9 +17,9 @@ class TestFTPUtil:
     def fixture_data(self):
         """Return the test data for the tests"""
         data = {
-            "FTPurl": INPE.FTPurl,
+            "FTPurl": INPEParsers.FTPurl,
             "NonExistentFTP": "nonexistent.example.com",
-            "DailyMERGEPath": INPE.DailyMERGEroot,
+            "DailyMERGEPath": INPEParsers.daily_rain_parser.root,
             "DownloadTestFile": "gera_Normais.ksh",
         }
         return data
@@ -64,3 +64,16 @@ class TestFTPUtil:
         assert isinstance(file_info["datetime"], datetime)
         assert isinstance(file_info["size"], int)
         assert len(file_info) == 2
+
+
+class TestOSUtil:
+    """Test the OSUTil class"""
+
+    def test_get_local_file_info(self):
+        """Test the get_local_file_info method"""
+        file_info = OSUtil.get_local_file_info(
+            "./tests/data/DAILY_RAIN/MERGE_CPTEC_20230301.tif"
+        )
+
+        assert isinstance(file_info["datetime"], datetime)
+        assert isinstance(file_info["size"], int)

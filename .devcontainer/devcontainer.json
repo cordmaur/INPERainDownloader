@@ -7,7 +7,8 @@
 		"dockerfile": "Dockerfile"
 	},
 	"mounts": [
-		"source=/Users/cordmaur/Library/CloudStorage/OneDrive-AgênciaNacionaldeÁguas/Trabalho/SOE/COVEC/Bases,target=/workspaces/bases,type=bind"
+		"source=/Users/cordmaur/Library/CloudStorage/OneDrive-AgênciaNacionaldeÁguas/Trabalho/SOE/COVEC/Bases,target=/workspaces/bases,type=bind",
+		"source=/Users/cordmaur/Projects/RainReporter,target=/workspaces/RainReporter,type=bind"
 	],
 	"runArgs": [
 		"--memory=4g",

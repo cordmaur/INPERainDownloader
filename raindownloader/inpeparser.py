@@ -7,11 +7,13 @@ remote_file_path(date: str)
 import os
 
 # from abc import ABC, abstractmethod
-from enum import Enum
+from enum import Enum, auto
 from pathlib import Path
 from typing import Callable, Optional, Union
 
 from datetime import datetime
+from dateutil import parser
+from dateutil.relativedelta import relativedelta
 
 import matplotlib.colors as colors
 
@@ -24,18 +26,18 @@ from .utils import DateProcessor, DateFrequency, FTPUtil, GISUtil
 class INPETypes(Enum):
     """Data types available from INPE"""
 
-    DAILY_RAIN = "prec"
-    MONTHLY_ACCUM_YEARLY = "pacum"
-    DAILY_AVERAGE = "pmed"
-    MONTHLY_ACCUM = "precacum"
-    MONTHLY_ACCUM_MANUAL = "monthacum"
+    DAILY_RAIN = {"id": auto(), "var": "prec"}
+    MONTHLY_ACCUM_YEARLY = {"id": auto(), "var": "pacum"}
+    DAILY_AVERAGE = {"id": auto(), "var": "pmed"}
+    MONTHLY_ACCUM = {"id": auto(), "var": "precacum"}
+    MONTHLY_ACCUM_MANUAL = {"id": auto(), "var": "monthacum"}
+    YEARLY_ACCUM = {"id": auto(), "var": "pacum"}
 
 
 class INPE:
     """Create the structure, given a root path (remote or local) and date/time of the file"""
 
-    FTPurl = "ftp.cptec.inpe.br"
-    DailyMERGEroot = "/modelos/tempo/MERGE/GPM/DAILY"
+    # DailyMERGEroot = "/modelos/tempo/MERGE/GPM/DAILY"
 
     # Define the colors and positions of the color stops
     cmap_colors = [(1.0, 1.0, 1.0), (1, 1, 1.0), (0.5, 0.5, 1.0), (1.0, 0.4, 0.6)]
@@ -72,9 +74,7 @@ class INPE:
         return f"MERGE_CPTEC_acum_{month_year}.nc"
 
     @staticmethod
-    def MERGE_daily_average_filename(
-        date: datetime,
-    ) -> str:  # pylint: disable=invalid-name
+    def MERGE_DA_filename(date: datetime) -> str:  # pylint: disable=invalid-name
         """
         Daily Average
         Create the filename of the MERGE file, given a specific date
@@ -83,13 +83,31 @@ class INPE:
         return f"MERGE_CPTEC_12Z{day_month}.nc"
 
     @staticmethod
-    def MERGE_MA_filename(date: datetime):  # pylint: disable=invalid-name
+    def MERGE_MA_filename(date: datetime) -> str:  # pylint: disable=invalid-name
         """
         Monthly Accumulated - Create the filename fot the Monthly Accumulated files from MERGE/INPE
         E.g.: MERGE_CPTEC_acum_sep.nc
         """
         month_abrev = DateProcessor.month_abrev(date)
         return f"MERGE_CPTEC_acum_{month_abrev}.nc"
+
+    @staticmethod
+    def MERGE_YA_filename(date: datetime) -> str:  # pylint: disable=invalid-name
+        """
+        Yearly Accumulated - Create the filename fot the Yearly Accumulated files from MERGE/INPE
+            E.g.: MERGE_CPTEC_acum_2003.nc
+        """
+        return f"MERGE_CPTEC_acum_{date.year}.nc"
+
+    @staticmethod
+    def yearly_post_proc(dset: xr.Dataset, date_str, **kwargs) -> xr.Dataset:
+        """Adjust the time for the dataset"""
+        date = parser.parse(date_str)
+
+        # fix month and day as 1
+        date = date + relativedelta(day=1, month=1)
+
+        return dset.assign_coords({"time": [date]})
 
     @staticmethod
     def grib2_post_proc(dset: xr.Dataset) -> xr.Dataset:
@@ -202,12 +220,13 @@ class MonthAccumParser(BaseParser):
             )
 
         else:
-
             return local_target
 
 
 class INPEParsers:
     """Just a structure to store the parsers for the INPE FTP"""
+
+    FTPurl = "ftp.cptec.inpe.br"
 
     daily_rain_parser = BaseParser(
         datatype=INPETypes.DAILY_RAIN,
@@ -226,7 +245,7 @@ class INPEParsers:
     daily_average = BaseParser(
         datatype=INPETypes.DAILY_AVERAGE,
         root="/modelos/tempo/MERGE/GPM/CLIMATOLOGY/DAILY_AVERAGE",
-        fn_creator=INPE.MERGE_daily_average_filename,
+        fn_creator=INPE.MERGE_DA_filename,
         date_freq=DateFrequency.DAILY,
     )
 
@@ -245,11 +264,21 @@ class INPEParsers:
         daily_parser=daily_rain_parser,
     )
 
+    year_accum = BaseParser(
+        datatype=INPETypes.YEARLY_ACCUM,
+        root="/modelos/tempo/MERGE/GPM/CLIMATOLOGY/YEAR_ACCUMULATED",
+        fn_creator=INPE.MERGE_YA_filename,
+        date_freq=DateFrequency.YEARLY,
+        post_proc=INPE.yearly_post_proc,
+    )
+
     parsers = [
         daily_rain_parser,
         monthly_accum_yearly,
         daily_average,
         monthly_accum,
         month_accum_manual,
+        year_accum,
     ]
+
     post_processors = {".grib2": INPE.grib2_post_proc, ".nc": INPE.nc_post_proc}

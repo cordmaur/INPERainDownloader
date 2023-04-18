@@ -1,16 +1,11 @@
 """
 Module with several utils used in raindownloader INPEraindownloader package
 """
-# download 1 arquivo por data/dia/etc.
-# download um range de datas
-# download última chuva
-# download ulitmos X dias
-
 import ftplib
 import os
 from pathlib import Path
 from typing import Union, List, Optional, Tuple
-from enum import Enum, auto
+from enum import Enum
 
 # from abc import ABC, abstractmethod
 import datetime
@@ -19,14 +14,129 @@ import calendar
 from dateutil import parser
 from dateutil.relativedelta import relativedelta
 
+import rasterio as rio
 import xarray as xr
+import rioxarray as xrio
 
 
 class DateFrequency(Enum):
     """Specifies date frequency for the products"""
 
-    DAILY = auto()
-    MONTHLY = auto()
+    DAILY = {"days": 1}
+    MONTHLY = {"months": 1}
+    YEARLY = {"years": 1}
+
+
+class DateProcessor:
+    """Docstring"""
+
+    @staticmethod
+    def parse_date(date: Union[str, datetime.datetime]) -> datetime.datetime:
+        """Return a date in datetime format, regardless the input [str | datetime]"""
+        return date if isinstance(date, datetime.datetime) else parser.parse(date)
+
+    @staticmethod
+    def normalize_date(date: Union[str, datetime.datetime]) -> str:
+        """
+        Parse the date string in any format accepted by dateutil and delivers a date
+        in the following format: "YYYYMMDD"
+        """
+        date = DateProcessor.parse_date(date)
+
+        return date.strftime("%Y%m%d")
+
+    @staticmethod
+    def pretty_date(date: Union[str, datetime.datetime]) -> str:
+        """Return the date in a pretty printable format dd/mm/yyyy"""
+        date = DateProcessor.parse_date(date)
+
+        return date.strftime("%d-%m-%Y")
+
+    @staticmethod
+    def dates_range(
+        start_date: Union[str, datetime.datetime],
+        end_date: Union[str, datetime.datetime],
+        date_freq: DateFrequency,
+    ) -> List[str]:
+        """Spawn a dates list in normalized format in the desired range"""
+
+        current_date = DateProcessor.parse_date(start_date)
+        final_date = DateProcessor.parse_date(end_date)
+
+        # create the step to be applied to the current date
+        step = relativedelta(**date_freq.value)
+
+        # looop through the dates
+        dates = []
+        while current_date <= final_date:
+            dates.append(DateProcessor.normalize_date(current_date))
+            current_date += step
+
+        return dates
+
+    @staticmethod
+    def month_abrev(date: Union[str, datetime.datetime]) -> str:
+        """Return the month as a three-character string"""
+        date = DateProcessor.parse_date(date)
+
+        return date.strftime("%b").lower()
+
+    @staticmethod
+    def start_end_dates(date: Union[str, datetime.datetime]) -> Tuple[str, str]:
+        """Return the first date and last date in a specific month"""
+        date = DateProcessor.parse_date(date)
+
+        # get the number of days
+        _, days = calendar.monthrange(date.year, date.month)
+        first_day = datetime.datetime(date.year, date.month, 1)
+        last_day = first_day + datetime.timedelta(days=days - 1)
+        return DateProcessor.normalize_date(first_day), DateProcessor.normalize_date(
+            last_day
+        )
+
+    @staticmethod
+    def last_n_months(
+        date: Union[str, datetime.datetime], lookback: int = 6
+    ) -> Tuple[str, str]:
+        """
+        Return start and end month considering the month of the given date and
+        looking back n months
+        """
+        date = DateProcessor.parse_date(date)
+
+        start_date = date - relativedelta(months=lookback - 1)
+
+        start_date_str = f"{start_date.year}-{start_date.month}"
+        end_date_str = f"{date.year}-{date.month}"
+
+        return (start_date_str, end_date_str)
+
+    @staticmethod
+    def create_monthly_periods(
+        start_date: Union[str, datetime.datetime],
+        end_date: Union[str, datetime.datetime],
+        month_step: int,
+    ) -> List[tuple]:
+        """Create monthly periods given a step (e.g, quaterly=3, semestraly=6, yearly=12)"""
+        current_date = DateProcessor.parse_date(start_date)
+        final_date = DateProcessor.parse_date(end_date)
+
+        periods = []
+        while current_date <= final_date:
+            start_period = current_date
+            end_period = start_period + relativedelta(months=month_step - 1)
+
+            # if the end date for the period is inside the final date, add this period
+            if end_period <= final_date:
+                periods.append((start_period, end_period))
+
+            # otherwise, quit the loop
+            else:
+                break
+
+            current_date += relativedelta(months=month_step)
+
+        return periods
 
 
 class FileType(Enum):
@@ -82,15 +192,9 @@ class FTPUtil:
         self,
         remote_file: str,
         local_folder: Union[str, Path],
-        # remote_tz_str: str = "GMT",
-        # local_tz_str: str = "Brazil/East",
         alt_server: Optional[str] = None,
     ) -> Path:
         """Download an ftp file preserving filename and timestamps"""
-
-        # to start, check if the timezones are valid
-        # remote_tz = pytz.timezone(remote_tz_str)
-        # local_tz = pytz.timezone(local_tz_str)
 
         # get a valid connection
         ftp = self.get_connection(alt_server=alt_server)
@@ -107,10 +211,6 @@ class FTPUtil:
         remote_time_str = ftp.sendcmd("MDTM " + remote_file)
         remote_time = parser.parse(remote_time_str[4:])
 
-        # correct the timestamp
-        # local_time = remote_tz.localize(remote_time).astimezone(local_tz)
-
-        # timestamp = local_time.timestamp()
         timestamp = remote_time.timestamp()
         os.utime(local_path, (timestamp, timestamp))
 
@@ -172,9 +272,7 @@ class GISUtil:
     @staticmethod
     def create_cube(
         files: List,
-        # name_parser: Optional[Callable] = None,
         dim_key: Optional[str] = "time",
-        # squeeze_dims: Optional[Union[List[str], str]] = None,
     ) -> xr.Dataset:
         """
         Stack the images in the list as one XARRAY Dataset cube.
@@ -214,6 +312,39 @@ class GISUtil:
 
         return profile
 
+    @staticmethod
+    def grib2tif(grib_file: Union[str, Path], epsg: int = 4326) -> Path:
+        """
+        Converts a GRIB2 file to GeoTiff and set correct CRS and Longitude
+        """
+        grib = xrio.open_rasterio(grib_file)  # type: ignore[no-unsized-index]
+
+        grib = grib.rio.write_crs(rio.CRS.from_epsg(epsg))  # type: ignore[attr]
+
+        # save the precipitation raster
+        filename = Path(grib_file).with_suffix(FileType.GEOTIFF.value)
+
+        grib[0].rio.to_raster(filename, compress="deflate")
+
+        return filename
+
+    @staticmethod
+    def grib2tif_old(grib_file: Union[str, Path], epsg: int = 4326) -> Path:
+        """
+        Converts a GRIB2 file to GeoTiff and set correct CRS and Longitude
+        """
+        grib = xrio.open_rasterio(grib_file)  # type: ignore[no-unsized-index]
+
+        # else:
+        grib = grib.rio.write_crs(rio.CRS.from_epsg(epsg))  # type: ignore[attr]
+
+        # save the precipitation raster
+        filename = Path(grib_file).with_suffix(FileType.GEOTIFF.value)
+
+        grib["prec"].rio.to_raster(filename, compress="deflate")
+
+        return filename
+
 
 class OSUtil:
     """Helper class for OS related functions"""
@@ -228,103 +359,3 @@ class OSUtil:
         local_dt = datetime.datetime.fromtimestamp(stat.st_mtime)
 
         return {"datetime": local_dt, "size": stat.st_size}
-
-
-class DateProcessor:
-    """Docstring"""
-
-    @staticmethod
-    def normalize_date(date: Union[str, datetime.datetime]) -> str:
-        """
-        Parse the date string in any format accepted by dateutil and delivers a date
-        in the following format: "YYYYMMDD"
-        """
-        if not isinstance(date, datetime.datetime):
-            date = parser.parse(date)
-
-        return date.strftime("%Y%m%d")
-
-    @staticmethod
-    def as_datetime(date: Union[str, datetime.datetime]) -> datetime.datetime:
-        """
-        Return the date as datetime
-        """
-        if not isinstance(date, datetime.datetime):
-            date = parser.parse(date)
-
-        return date
-
-    @staticmethod
-    def pretty_date(date: Union[str, datetime.datetime]) -> str:
-        """Return the date in a pretty printable format dd/mm/yyyy"""
-        if not isinstance(date, datetime.datetime):
-            date = parser.parse(date)
-
-        return date.strftime("%d-%m-%Y")
-
-    @staticmethod
-    def dates_range(
-        start_date: str, end_date: str, date_freq: DateFrequency
-    ) -> List[str]:
-        """Spawn a dates list in normalized format in the desired range"""
-
-        current_date = parser.parse(start_date)
-        final_date = parser.parse(end_date)
-
-        dates = []
-
-        if date_freq == DateFrequency.DAILY:
-            while current_date <= final_date:
-                dates.append(current_date.strftime("%Y%m%d"))
-                current_date += datetime.timedelta(days=1)
-
-        elif date_freq == DateFrequency.MONTHLY:
-            # set the first day of the month
-            current_date = datetime.datetime(current_date.year, current_date.month, 1)
-            while current_date <= final_date:
-                dates.append(DateProcessor.normalize_date(current_date))
-                days = calendar.monthrange(current_date.year, current_date.month)[1]
-                current_date += datetime.timedelta(days=days)
-
-        return dates
-
-    @staticmethod
-    def month_abrev(date: Union[str, datetime.datetime]) -> str:
-        """Return the month as a three-character string"""
-        if not isinstance(date, datetime.datetime):
-            date = parser.parse(date)
-
-        return date.strftime("%b").lower()
-
-    @staticmethod
-    def start_end_dates(date: Union[str, datetime.datetime]) -> Tuple[str, str]:
-        """Return the first date and last date in a specific month"""
-        if not isinstance(date, datetime.datetime):
-            date = parser.parse(date)
-
-        # get the number of days
-        _, days = calendar.monthrange(date.year, date.month)
-        first_day = datetime.datetime(date.year, date.month, 1)
-        last_day = first_day + datetime.timedelta(days=days - 1)
-        return DateProcessor.normalize_date(first_day), DateProcessor.normalize_date(
-            last_day
-        )
-
-    @staticmethod
-    def last_n_months(
-        date: Union[str, datetime.datetime], lookback: int = 6
-    ) -> Tuple[str, str]:
-        """
-        Return start and end month considering the month of the given date and
-        looking back n months
-        """
-
-        if not isinstance(date, datetime.datetime):
-            date = parser.parse(date)
-
-        start_date = date - relativedelta(months=lookback - 1)
-
-        start_date_str = f"{start_date.year}-{start_date.month}"
-        end_date_str = f"{date.year}-{date.month}"
-
-        return (start_date_str, end_date_str)
