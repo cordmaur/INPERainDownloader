@@ -102,7 +102,7 @@ class INPE:
     @staticmethod
     def yearly_post_proc(dset: xr.Dataset, date_str, **kwargs) -> xr.Dataset:
         """Adjust the time for the dataset"""
-        date = parser.parse(date_str)
+        date = DateProcessor.parse_date(date_str)
 
         # fix month and day as 1
         date = date + relativedelta(day=1, month=1)
@@ -155,23 +155,47 @@ class MonthAccumParser(BaseParser):
 
         self.daily_parser = daily_parser
 
-    def download_file(self, date_str: str, local_folder: Union[str, Path]):
+    def download_file(self, date: Union[str, datetime], local_folder: Union[str, Path]):
         """Actually this function performs as accum_monthly_rain"""
-        # raise NotImplementedError(
-        #     f"download_file not implemented for parser {self.datatype}"
-
         # accumulate the daily rain
         return self.accum_monthly_rain(
-            date_str=date_str, local_folder=local_folder, force_download=True
+            date=date, local_folder=local_folder, force_download=True
         )
 
     def accum_monthly_rain(
-        self, date_str: str, local_folder: Union[str, Path], force_download: bool
+        self,
+        date: Union[str, datetime],
+        local_folder: Union[str, Path],
+        force_download: bool,
     ) -> Path:
         """Docstring"""
 
         # create a cube with the daily rain in the given month
-        start_date, end_date = DateProcessor.start_end_dates(date=date_str)
+        start_date, end_date = DateProcessor.start_end_dates(date=date)
+
+        # here, we will check for the current month
+        now = datetime.now()
+        today = datetime(now.year, now.month, now.day)
+
+        if DateProcessor.parse_date(end_date) >= today:
+            # if the end date is future, it meansn we are trying to get the current month
+            # in this case, let's start going backwards to see the last available file in the FTP
+            for day in range(today.day, 0, -1):
+                end_date = today + relativedelta(day=day)
+                remote_file = self.daily_parser.remote_target(
+                    DateProcessor.normalize_date(end_date)
+                )
+
+                # if the file exists, then we have our end date
+                if self.ftp.file_exists(remote_file):
+                    break
+
+                # otherwise, raise exception if we reached the first day
+                if day == 1:
+                    raise Exception(f"No avilable file to calculate month {date}")
+
+        end_date = DateProcessor.normalize_date(end_date)
+
         daily_files = self.daily_parser.get_range(
             start_date=start_date,
             end_date=end_date,
@@ -185,23 +209,21 @@ class MonthAccumParser(BaseParser):
         # get the reference datetime
         ref_time = cube.time[0].values
 
-        accum = cube[INPETypes.DAILY_RAIN.value].sum(dim="time")
-        accum = accum.rename(INPETypes.MONTHLY_ACCUM_MANUAL.value)
+        accum = cube[INPETypes.DAILY_RAIN.value["var"]].sum(dim="time")
+        accum = accum.rename(INPETypes.MONTHLY_ACCUM_MANUAL.value["var"])
 
         # once the reduction is being done in the time dimension, create a new dimension for time
         accum = accum.assign_coords({"time": ref_time}).expand_dims(dim="time")
 
         # save the file to disk
-        target_file = self.local_target(date_str=date_str, local_folder=local_folder)
+        target_file = self.local_target(date=date, local_folder=local_folder)
         accum.to_dataset().to_netcdf(target_file)
 
         return target_file
 
-        # return self.daily_parser.get_file(date_str=date_str, local_folder=local_folder)
-
     def get_file(
         self,
-        date_str: str,
+        date: Union[str, datetime],
         local_folder: Union[str, Path],
         force_download: bool = False,
     ) -> Path:
@@ -211,13 +233,32 @@ class MonthAccumParser(BaseParser):
         changed in the server
         """
 
-        local_target = self.local_target(date_str=date_str, local_folder=local_folder)
-        if force_download or not local_target.exists():
-            return self.accum_monthly_rain(
-                date_str=date_str,
+        local_target = self.local_target(date=date, local_folder=local_folder)
+
+        # we will force the accum_monthly rain if the month is the current month
+        date = DateProcessor.parse_date(date) + relativedelta(day=1)
+
+        now = datetime.now() + relativedelta(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+
+        # check if we are in the same month... if that's the case, force the parsers to check if the files
+        # were updated in the server
+        if now == date or force_download or not local_target.exists():
+            # store the old avoid update status
+            avoid_update = self.daily_parser.avoid_update
+            self.daily_parser.avoid_update = True  # False
+
+            file = self.accum_monthly_rain(
+                date=date,
                 local_folder=local_folder,
                 force_download=force_download,
             )
+
+            # retrieve the avoid_update status
+            self.daily_parser.avoid_update = avoid_update
+
+            return file
 
         else:
             return local_target

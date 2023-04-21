@@ -46,11 +46,13 @@ class DateProcessor:
         return date.strftime("%Y%m%d")
 
     @staticmethod
-    def pretty_date(date: Union[str, datetime.datetime]) -> str:
+    def pretty_date(
+        date: Union[str, datetime.datetime], format_str: str = "%d-%m-%Y"
+    ) -> str:
         """Return the date in a pretty printable format dd/mm/yyyy"""
         date = DateProcessor.parse_date(date)
 
-        return date.strftime("%d-%m-%Y")
+        return date.strftime(format_str)
 
     @staticmethod
     def dates_range(
@@ -88,11 +90,15 @@ class DateProcessor:
 
         # get the number of days
         _, days = calendar.monthrange(date.year, date.month)
+
+        # Get the first and last day of the month
         first_day = datetime.datetime(date.year, date.month, 1)
-        last_day = first_day + datetime.timedelta(days=days - 1)
-        return DateProcessor.normalize_date(first_day), DateProcessor.normalize_date(
-            last_day
-        )
+        last_day = datetime.datetime(date.year, date.month, days)
+
+        first_day_str = DateProcessor.normalize_date(first_day)
+        last_day_str = DateProcessor.normalize_date(last_day)
+
+        return first_day_str, last_day_str
 
     @staticmethod
     def last_n_months(
@@ -137,6 +143,12 @@ class DateProcessor:
             current_date += relativedelta(months=month_step)
 
         return periods
+
+    @staticmethod
+    def today():
+        """Return the current date without the time part"""
+        now = datetime.datetime.now()
+        return now + relativedelta(hour=0, minute=0, second=0, microsecond=0)
 
 
 class FileType(Enum):
@@ -240,13 +252,14 @@ class FTPUtil:
 
     def file_exists(self, remote_file: str) -> bool:
         """Docstring"""
+        ftp = self.get_connection()
 
         try:
-            self.ftp.size(remote_file)
+            ftp.size(remote_file)
 
         except ftplib.error_perm as error:
             if str(error).startswith("550"):
-                print("File does not exists")
+                pass
             else:
                 print(f"Error checking file existence: {error}")
             return False

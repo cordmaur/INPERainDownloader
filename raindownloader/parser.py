@@ -9,6 +9,7 @@ from pathlib import Path
 from enum import Enum
 from typing import Callable, Optional, Union, List
 from dateutil import parser
+from datetime import datetime
 
 from .utils import DateProcessor, DateFrequency, FTPUtil, OSUtil
 
@@ -71,11 +72,21 @@ class BaseParser:
         else:
             return self.datatype
 
+    def clean_local_folder(self, local_folder: Union[str, Path]) -> None:
+        """Clear the .idx files in the local download folder"""
+
+        # get the local path
+        local_path = self.local_path(local_folder=local_folder)
+
+        # get idx files
+        for file in local_path.glob("*.idx"):
+            file.unlink()
+
     ### File/folder structure functions
-    def filename(self, date_str: str) -> str:
+    def filename(self, date: Union[str, datetime]) -> str:
         """Return just the filename given a date string"""
         # get the datetime
-        date = parser.parse(date_str)
+        date = DateProcessor.parse_date(date)
 
         return self.fn_creator(date)
 
@@ -88,25 +99,27 @@ class BaseParser:
         local_path.mkdir(parents=False, exist_ok=True)
         return local_path
 
-    def local_target(self, date_str: str, local_folder: Union[Path, str]) -> Path:
+    def local_target(
+        self, date: Union[str, datetime], local_folder: Union[Path, str]
+    ) -> Path:
         """
         Local target is the full path of the local file, given a date_str
         """
-        return self.local_path(local_folder) / self.filename(date_str)
+        return self.local_path(local_folder) / self.filename(date)
 
-    def remote_path(self, date_str: str) -> str:
+    def remote_path(self, date: Union[str, datetime]) -> str:
         """Return just the base path given a date string"""
         # get the datetime
-        date = parser.parse(date_str)
+        date = DateProcessor.parse_date(date)
 
         if self.fl_creator:
             return os.path.join(self.root, self.fl_creator(date))
         else:
             return self.root
 
-    def remote_target(self, date_str: str) -> str:
+    def remote_target(self, date: Union[str, datetime]) -> str:
         """Target is composed by root / folder / filename"""
-        return os.path.join(self.remote_path(date_str), self.filename(date_str))
+        return os.path.join(self.remote_path(date), self.filename(date))
 
     def dates_range(self, start_date: str, end_date: str) -> List[str]:
         """Return the dates range within the specified period"""
@@ -115,7 +128,9 @@ class BaseParser:
         )
 
     ### Download functions
-    def download_file(self, date_str: str, local_folder: Union[Path, str]) -> Path:
+    def download_file(
+        self, date: Union[str, datetime], local_folder: Union[Path, str]
+    ) -> Path:
         """
         Download the parsed file to a local subfolder (according to the parser datatype).
         OBS: Download file always force the download. Otherwise, use the `get_file` function
@@ -123,7 +138,7 @@ class BaseParser:
 
         # Download the file directly
         downloaded_file = self.ftp.download_ftp_file(
-            remote_file=self.remote_target(date_str=date_str),
+            remote_file=self.remote_target(date=date),
             local_folder=self.local_path(local_folder=local_folder),
         )
 
@@ -131,13 +146,13 @@ class BaseParser:
 
     def is_downloaded(
         self,
-        date_str: str,
+        date: Union[str, datetime],
         local_folder: Union[str, Path],
     ) -> bool:
         """Compare remote and local files and return if they are equal"""
 
         # create target to the local file
-        local_target = self.local_target(date_str=date_str, local_folder=local_folder)
+        local_target = self.local_target(date=date, local_folder=local_folder)
 
         # if the file does not exist, exit with false
         if not local_target.exists():
@@ -149,7 +164,7 @@ class BaseParser:
 
         ### Check if file has changed in the server
         # create a string pointing to the remote file and get its info
-        remote_file = self.remote_target(date_str)
+        remote_file = self.remote_target(date)
 
         # Now we need to compare the remote and local files
         local_info = OSUtil.get_local_file_info(local_target)
@@ -160,7 +175,7 @@ class BaseParser:
 
     def get_file(
         self,
-        date_str: str,
+        date: Union[str, datetime],
         local_folder: Union[str, Path],
         force_download: bool = False,
     ) -> Path:
@@ -171,13 +186,12 @@ class BaseParser:
         """
 
         if force_download or not self.is_downloaded(
-            date_str=date_str,
-            local_folder=local_folder,
+            date=date, local_folder=local_folder
         ):
-            return self.download_file(date_str=date_str, local_folder=local_folder)
+            return self.download_file(date=date, local_folder=local_folder)
 
         else:
-            return self.local_target(date_str=date_str, local_folder=local_folder)
+            return self.local_target(date=date, local_folder=local_folder)
 
     def get_files(
         self,
@@ -193,7 +207,7 @@ class BaseParser:
         for date in dates:
             files.append(
                 self.get_file(
-                    date_str=date,
+                    date=date,
                     local_folder=local_folder,
                     force_download=force_download,
                 )

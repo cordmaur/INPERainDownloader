@@ -5,10 +5,10 @@ Module with specialized classes to understand the INPE FTP Structure
 from pathlib import Path
 from enum import Enum
 from typing import Union, List, Optional, Callable
+from datetime import datetime
 
 import geopandas as gpd
 import xarray as xr
-
 
 from .utils import FTPUtil, OSUtil
 from .inpeparser import INPETypes
@@ -38,6 +38,7 @@ class Downloader:
         for parser in self.parsers:
             parser.ftp = self.ftp
             parser.avoid_update = self.avoid_update
+            parser.clean_local_folder(local_folder=local_folder)
 
         # functions to be applied to filetypes after they are loaded
         self.post_processors = {} if post_processors is None else post_processors
@@ -91,7 +92,7 @@ class Downloader:
         """Return if the desired file is downloaded. Dispatch to the correct parser"""
         parser = self.get_parser(datatype=datatype)
         return parser.is_downloaded(
-            date_str=date_str,
+            date=date_str,
             local_folder=self.local_folder,
         )
 
@@ -117,21 +118,34 @@ class Downloader:
 
         raise ValueError(f"Parser not found for data type {datatype}")
 
-    def remote_file_path(self, date_str: str, datatype: Union[Enum, str]) -> str:
+    def remote_file_path(
+        self, date: Union[str, datetime], datatype: Union[Enum, str]
+    ) -> str:
         """Create the remote file path given a date"""
         parser = self.get_parser(datatype=datatype)
 
-        return parser.remote_target(date_str=date_str)
+        return parser.remote_target(date=date)
 
-    def remote_file_exists(self, date_str: str, datatype: Union[Enum, str]) -> bool:
+    def remote_file_exists(
+        self, date: Union[str, datetime], datatype: Union[Enum, str]
+    ) -> bool:
         """Check if a remote file exists"""
 
-        remote_file = self.remote_file_path(date_str, datatype=datatype)
+        remote_file = self.remote_file_path(date, datatype=datatype)
         return self.ftp.file_exists(remote_file=remote_file)
+
+    def local_file_exists(
+        self, date: Union[str, datetime], datatype: Union[Enum, str]
+    ) -> bool:
+        """Verify if a specific local file exists"""
+        parser = self.get_parser(datatype=datatype)
+        local_target = parser.local_target(date=date, local_folder=self.local_folder)
+
+        return local_target.exists()
 
     def local_file_path(
         self,
-        date_str: str,
+        date: Union[str, datetime],
         datatype: Union[Enum, str],
     ) -> Path:
         """
@@ -139,7 +153,7 @@ class Downloader:
         It uses the filename function to derive the final filename.
         """
         parser = self.get_parser(datatype=datatype)
-        return parser.local_target(date_str=date_str, local_folder=self.local_folder)
+        return parser.local_target(date=date, local_folder=self.local_folder)
 
     def files_range(
         self, start_date_str: str, end_date_str: str, datatype: Union[INPETypes, str]
@@ -152,7 +166,7 @@ class Downloader:
 
     def download_file(
         self,
-        date_str: str,
+        date: str,
         datatype: Union[Enum, str],
     ) -> Path:
         """
@@ -160,11 +174,11 @@ class Downloader:
         folder filename will be obtained from the respective parsers.
         """
         parser = self.get_parser(datatype=datatype)
-        return parser.download_file(date_str=date_str, local_folder=self.local_folder)
+        return parser.download_file(date=date, local_folder=self.local_folder)
 
     def get_file(
         self,
-        date_str: str,
+        date: Union[str, datetime],
         datatype: Union[Enum, str],
         force_download: bool = False,
     ) -> Path:
@@ -175,7 +189,7 @@ class Downloader:
         """
         parser = self.get_parser(datatype=datatype)
         return parser.get_file(
-            date_str=date_str,
+            date=date,
             local_folder=self.local_folder,
             force_download=force_download,
         )
@@ -230,7 +244,7 @@ class Downloader:
 
         # get the file
         file = self.get_file(
-            date_str=date_str, datatype=datatype, force_download=force_download
+            date=date_str, datatype=datatype, force_download=force_download
         )
 
         # open the file as is
@@ -266,10 +280,6 @@ class Downloader:
         Stack the images in the list as one XARRAY Dataset cube.
         """
 
-        # first, check if name parser and dimension key are setted correctly
-        # if (name_parser is None) ^ (dim_key is None):
-        #     raise ValueError("If name parser or dim key is set, both must be setted.")
-
         # set the stacked dimension name
         dim = "time" if dim_key is None else dim_key
 
@@ -297,6 +307,9 @@ class Downloader:
         dates = self.get_parser(datatype).dates_range(
             start_date=start_date, end_date=end_date
         )
+
+        # make sure the files are downloaded
+        self.get_files(dates=dates, datatype=datatype)
 
         # then, create the cube
         cube = self._create_cube(
