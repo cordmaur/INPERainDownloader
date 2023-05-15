@@ -4,8 +4,9 @@ Module with specialized classes to understand the INPE FTP Structure
 
 from pathlib import Path
 from enum import Enum
-from typing import Union, List, Optional, Callable
+from typing import Union, List, Optional, Callable, Dict
 from datetime import datetime
+import logging
 
 import geopandas as gpd
 import xarray as xr
@@ -24,15 +25,43 @@ class Downloader:
         parsers: List[BaseParser],
         local_folder: Union[str, Path],
         avoid_update: bool = True,
-        post_processors: Optional[dict] = None,
+        post_processors: Optional[Dict[str, Callable]] = None,
+        log_level: int = logging.INFO,
     ) -> None:
+        """
+        :param server: FTP server to connect to (should accept Anonymous)
+        :param parsers: List of parsers to understand the FTP filesystem. Each parser will
+        be responsible for parsing one file type (e.g., Daily Rain, Monthly Accumulated, etc.)
+        For a list of available parsers, take a look at INPEParsers (from raindownloader.inpeparser import INPEParsers)
+        :param local_folder: Local folder to download the images and save the .log
+        :param avoid_update: Avoid looking for updates in the remote file, every time it is requested, defaults to True
+        :param post_processors: Any function that should be applied to the image after download.
+        This argument should be a dictionary of file extension and function.
+        For default processor, check NPEParsers.post_processors. Defaults to None
+        """
+
         # store initialization variables
         self.ftp = FTPUtil(server)
         self.parsers = parsers
         self.local_folder = Path(local_folder)
-
-        # Avoid checking for updates in the server everytime a file is requested
         self.avoid_update = avoid_update
+
+        # create the logger
+        self.logger = logging.getLogger(__name__)
+
+        # if the logger doesn't have any handlers, set everything
+        if not self.logger.hasHandlers():
+            handler = Downloader.create_logger_handler(self.local_folder, log_level)
+            self.logger.addHandler(handler)
+            self.ftp.logger.addHandler(handler)
+
+            for parser in self.parsers:
+                parser.logger.addHandler(handler)
+
+        self.logger.info("Initializing the Downloader class")
+
+        # functions to be applied to filetypes after they are loaded
+        self.post_processors = {} if post_processors is None else post_processors
 
         # update the parsers with global configs
         for parser in self.parsers:
@@ -40,8 +69,29 @@ class Downloader:
             parser.avoid_update = self.avoid_update
             parser.clean_local_folder(local_folder=local_folder)
 
-        # functions to be applied to filetypes after they are loaded
-        self.post_processors = {} if post_processors is None else post_processors
+    @staticmethod
+    def create_logger_handler(folder: Union[str, Path], level: int):
+        """
+        Create a logger file handler for all the project
+        :param folder: Folder to put the log gile
+        :return: file handler
+        """
+        # set the base level as DEBUG
+        logging.basicConfig(level=logging.DEBUG)
+
+        # clear the handler of the root logger to avoid messages being sent to console
+        logging.getLogger().handlers.clear()
+
+        path = Path(folder)
+        file_handler = logging.FileHandler(path / "downloader.log")
+        file_handler.setLevel(level)
+        file_handler.setFormatter(
+            logging.Formatter(
+                "[%(asctime)s:%(levelname)s:%(name)s] %(message)s",
+                datefmt="%Y%m%d-%H%M%S",
+            )
+        )
+        return file_handler
 
     @staticmethod
     def cut_cube_by_geoms(
@@ -90,6 +140,9 @@ class Downloader:
         datatype: Union[INPETypes, str],
     ):
         """Return if the desired file is downloaded. Dispatch to the correct parser"""
+
+        self.logger.debug("Checking if %s/%s is downloaded", datatype, date_str)
+
         parser = self.get_parser(datatype=datatype)
         return parser.is_downloaded(
             date=date_str,
@@ -107,11 +160,15 @@ class Downloader:
 
         local_file = self.local_file_path(date_str, datatype=datatype)
         local_info = OSUtil.get_local_file_info(local_file)
+
+        self.logger.debug("Comparing %s to %s", remote_file, local_file)
+
         print(remote_info)
         print(local_info)
 
     def get_parser(self, datatype: Union[Enum, str]) -> BaseParser:
         """Get the correct parser for the specified datatype"""
+
         for parser in self.parsers:
             if parser.datatype == datatype:
                 return parser
@@ -242,6 +299,8 @@ class Downloader:
         from the dataset, otherwise return the dataset.
         """
 
+        self.logger.debug("Asked to open file %s/%s", date_str, datatype)
+
         # get the file
         file = self.get_file(
             date=date_str, datatype=datatype, force_download=force_download
@@ -302,6 +361,10 @@ class Downloader:
         force_download: bool = False,
     ) -> xr.DataArray:
         """Create a cube from the range and apply the post_processor of the downloader"""
+
+        self.logger.info(
+            "Creating cube from %s to %s (%s)", start_date, end_date, datatype
+        )
 
         # first, let's grab the desired dates
         dates = self.get_parser(datatype).dates_range(

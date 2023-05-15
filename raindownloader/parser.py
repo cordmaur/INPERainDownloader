@@ -8,8 +8,8 @@ import os
 from pathlib import Path
 from enum import Enum
 from typing import Callable, Optional, Union, List
-from dateutil import parser
 from datetime import datetime
+import logging
 
 from .utils import DateProcessor, DateFrequency, FTPUtil, OSUtil
 
@@ -49,6 +49,8 @@ class BaseParser:
         self.avoid_update = avoid_update
         self.post_proc = post_proc
 
+        self.logger = logging.getLogger(str(datatype))
+
     @property
     def ftp(self):
         """Retrieve the internal ftp object"""
@@ -77,6 +79,8 @@ class BaseParser:
 
         # get the local path
         local_path = self.local_path(local_folder=local_folder)
+
+        self.logger.debug("Cleaning folder: %s", local_path)
 
         # get idx files
         for file in local_path.glob("*.idx"):
@@ -136,9 +140,12 @@ class BaseParser:
         OBS: Download file always force the download. Otherwise, use the `get_file` function
         """
 
+        remote_target = self.remote_target(date=date)
+        self.logger.info("Downloading file %s", remote_target)
+
         # Download the file directly
         downloaded_file = self.ftp.download_ftp_file(
-            remote_file=self.remote_target(date=date),
+            remote_file=remote_target,
             local_folder=self.local_path(local_folder=local_folder),
         )
 
@@ -154,12 +161,16 @@ class BaseParser:
         # create target to the local file
         local_target = self.local_target(date=date, local_folder=local_folder)
 
+        self.logger.debug("Checking if %s exists", local_target)
+
         # if the file does not exist, exit with false
         if not local_target.exists():
+            self.logger.debug("File %s does not exist", local_target)
             return False
 
         # if it exists locally and avoid update is True, we can confirm it is already downloaded
         if self.avoid_update:
+            self.logger.debug("File %s exists, but avoiding its update", local_target)
             return True
 
         ### Check if file has changed in the server
@@ -169,9 +180,13 @@ class BaseParser:
         # Now we need to compare the remote and local files
         local_info = OSUtil.get_local_file_info(local_target)
 
-        result = self.ftp.file_changed(remote_file=remote_file, file_info=local_info)
+        changed = self.ftp.file_changed(remote_file=remote_file, file_info=local_info)
 
-        return result
+        self.logger.debug(
+            "File %s has %s on the server", local_target.name, "" if changed else "NOT"
+        )
+
+        return False if changed else True
 
     def get_file(
         self,
@@ -184,6 +199,9 @@ class BaseParser:
         If it is available locally and avoid_update is not True, check if the file has
         changed in the server
         """
+        self.logger.info(
+            "Getting %s/%s", self.datatype, DateProcessor.pretty_date(date)
+        )
 
         if force_download or not self.is_downloaded(
             date=date, local_folder=local_folder
@@ -227,6 +245,7 @@ class BaseParser:
         If there is a problem during the download of one file, a message error will be in the list.
         """
         dates = self.dates_range(start_date, end_date)
+
         return self.get_files(
             dates=dates,
             local_folder=local_folder,

@@ -39,7 +39,7 @@ class TestDownloader:
         downloader = Downloader(
             server="ftp.example.com",
             parsers=INPEParsers.parsers,
-            local_folder="data",
+            local_folder="tests/data",
             avoid_update=True,
             post_processors=None,
         )

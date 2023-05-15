@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Union, List, Optional, Tuple
 from enum import Enum
+import logging
 
 # from abc import ABC, abstractmethod
 import datetime
@@ -164,6 +165,8 @@ class FTPUtil:
 
     def __init__(self, server: str) -> None:
         self.ftp = FTPUtil.open_connection(server)
+
+        self.logger = logging.getLogger(self.__class__.__qualname__)
 
     @staticmethod
     def open_connection(server: str) -> ftplib.FTP:

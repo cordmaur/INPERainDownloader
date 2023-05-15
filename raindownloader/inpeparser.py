@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Callable, Optional, Union
 
 from datetime import datetime
-from dateutil import parser
 from dateutil.relativedelta import relativedelta
 
 import matplotlib.colors as colors
