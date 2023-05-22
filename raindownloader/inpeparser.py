@@ -251,17 +251,22 @@ class MonthAccumParser(BaseParser):
             must_update = True
 
         else:
-            # the file exists, so let's open it
-            dset = xr.open_dataset(local_target)
+            # the file exists, try to open it and check if it is updated
+            try:
+                dset = xr.open_dataset(local_target)
 
-            if (
-                ("updated" not in dset.attrs)
-                or ("days" not in dset.attrs)
-                or ("last_day" not in dset.attrs)
-            ):
-                self.logger.debug(
-                    "Forcing update for date %s to add the new attributes ", date
-                )
+                if (
+                    ("updated" not in dset.attrs)
+                    or ("days" not in dset.attrs)
+                    or ("last_day" not in dset.attrs)
+                ):
+                    self.logger.debug(
+                        "Forcing update for date %s to add the new attributes ", date
+                    )
+                    must_update = True
+
+            except Exception as error:
+                self.logger.error(error)
                 must_update = True
 
         # now, we have to decide if the file must be updated
