@@ -170,7 +170,7 @@ class BaseParser:
 
         # if it exists locally and avoid update is True, we can confirm it is already downloaded
         if self.avoid_update:
-            self.logger.debug("File %s exists, but avoiding its update", local_target)
+            self.logger.debug("File %s exists, and avoiding its update", local_target)
             return True
 
         ### Check if file has changed in the server

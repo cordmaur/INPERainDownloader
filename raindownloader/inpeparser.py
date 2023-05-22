@@ -11,6 +11,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Callable, Optional, Union
 
+import calendar
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
@@ -216,7 +217,14 @@ class MonthAccumParser(BaseParser):
 
         # save the file to disk
         target_file = self.local_target(date=date, local_folder=local_folder)
-        accum.to_dataset().to_netcdf(target_file)
+        dset = accum.to_dataset()
+
+        # update the creation date for this file
+        dset.attrs["updated"] = str(now)
+        dset.attrs["last_day"] = end_date
+        dset.attrs["days"] = len(daily_files)
+
+        dset.to_netcdf(target_file)
 
         return target_file
 
@@ -232,18 +240,83 @@ class MonthAccumParser(BaseParser):
         changed in the server
         """
 
+        must_update = False
+        dset = None
         local_target = self.local_target(date=date, local_folder=local_folder)
 
-        # we will force the accum_monthly rain if the month is the current month
-        date = DateProcessor.parse_date(date) + relativedelta(day=1)
+        self.logger.debug("Getting file %s", local_target.name)
 
-        now = datetime.now() + relativedelta(
-            day=1, hour=0, minute=0, second=0, microsecond=0
-        )
+        # first check verifies if the file exists and has the new attributes
+        if not local_target.exists() or force_download:
+            must_update = True
 
-        # check if we are in the same month... if that's the case, force the parsers to check if the files
-        # were updated in the server
-        if now == date or force_download or not local_target.exists():
+        else:
+            # the file exists, so let's open it
+            dset = xr.open_dataset(local_target)
+
+            if (
+                ("updated" not in dset.attrs)
+                or ("days" not in dset.attrs)
+                or ("last_day" not in dset.attrs)
+            ):
+                self.logger.debug(
+                    "Forcing update for date %s to add the new attributes ", date
+                )
+                must_update = True
+
+        # now, we have to decide if the file must be updated
+        if dset is not None and not must_update:
+            # first, let's get the dates from the file
+            date = DateProcessor.parse_date(date)
+            now = datetime.now()
+            last_day = DateProcessor.parse_date(dset.attrs["last_day"])
+            updated = DateProcessor.parse_date(dset.attrs["updated"])
+
+            # if file was updated in the last 30 min, return it regardless anything.
+            update_delta = now - updated
+            if update_delta.seconds < (30 * 60):
+                return local_target
+
+            # check if it is complete (has all the necessary days)
+            if (date.year == now.year) and (date.month == now.month):
+                ref_days = now.day
+            else:
+                _, ref_days = calendar.monthrange(date.year, date.month)
+
+            if dset.attrs["days"] != ref_days:
+                self.logger.debug(
+                    "File was created with %s days, expected: %s days",
+                    dset.attrs["days"],
+                    ref_days,
+                )
+                must_update = True
+
+            else:
+                # now, let's check how far are the days in the past
+                timedelta = now - last_day
+                if timedelta.days < 30:
+                    # file references nearby dates, let's check if it was updated recently
+                    self.logger.debug("Month within 30 days limit.")
+
+                    if update_delta.seconds > (2 * 60 * 60):
+                        # last update was more than 2 hours ago
+                        self.logger.debug(
+                            "Last file update was %s. Forcing new update.", updated
+                        )
+                        must_update = True
+                    else:
+                        self.logger.debug("File updated recently (%s)", updated)
+
+                else:
+                    self.logger.debug(
+                        "Monthly file refers to old files. Not necessary to update."
+                    )
+
+        # close the dataset
+        if dset is not None:
+            dset.close()
+
+        if must_update:
             # store the old avoid update status
             avoid_update = self.daily_parser.avoid_update
             self.daily_parser.avoid_update = True  # False
@@ -256,11 +329,114 @@ class MonthAccumParser(BaseParser):
 
             # retrieve the avoid_update status
             self.daily_parser.avoid_update = avoid_update
-
             return file
 
-        else:
-            return local_target
+        return local_target
+
+        # must_update = False
+        # local_target = self.local_target(date=date, local_folder=local_folder)
+
+        # # if the file does not exist or we ask to download it again, we set the must_update flag
+        # # to True
+        # if not local_target.exists() or force_download:
+        #     must_update = True
+
+        # # otherwise we have to open the file and check update conditions
+        # else:
+        #     dset = xr.open_dataset(local_target)
+
+        #     ### Check attributes to conform the files to the new version
+        #     if (
+        #         ("updated" not in dset.attrs)
+        #         or ("days" not in dset.attrs)
+        #         or ("last_day" not in dset.attrs)
+        #     ):
+        #         self.logger.debug(
+        #             "Forcing update for date %s to add the new attributes ", date
+        #         )
+        #         must_update = True
+
+        #     else:
+        #         # get the dates from the file
+        #         date = DateProcessor.parse_date(date)
+        #         now = datetime.now()
+        #         last_day = DateProcessor.parse_date(dset.attrs["last_day"])
+        #         updated = DateProcessor.parse_date(dset.attrs["updated"])
+
+        #         # Now, let's treat separately if we are in the current month or not
+        #         if (date.year == now.year) and (date.month == now.month):
+        #             # if we are in the current month, check the last day used in the file
+        #             # force update if last update was more than 2 hour ago.
+        #             timedelta = now - updated
+        #             if (now.day >= last_day.day) or (timedelta.seconds > 2 * 60 * 60):
+        #                 self.logger.debug(
+        #                     "Last update was %s minutes ago", timedelta.seconds / 60
+        #                 )
+        #                 if now.day >= last_day.day:
+        #                     self.logger.debug("Last_day %s < today", last_day)
+
+        #                 self.logger.debug("Forcing update")
+        #                 must_update = True
+
+        #             else:
+        #                 must_update = False
+
+        #         else:
+        #             # let's check if the file was updated with all the necessary days.
+        #             _, days = calendar.monthrange(date.year, date.month)
+
+        #             # update the file if the number of days differ or if the last day is recent??
+        #             if dset["days"] != days:
+        #                 self.logger.debug(
+        #                     "File was created with %s, expected: %s", dset["days"], days
+        #                 )
+        #                 must_update = True
+
+        # if must_update:
+        #     # store the old avoid update status
+        #     avoid_update = self.daily_parser.avoid_update
+        #     self.daily_parser.avoid_update = True  # False
+
+        #     file = self.accum_monthly_rain(
+        #         date=date,
+        #         local_folder=local_folder,
+        #         force_download=force_download,
+        #     )
+
+        #     # retrieve the avoid_update status
+        #     self.daily_parser.avoid_update = avoid_update
+        #     return file
+
+        # else:
+        #     return local_target
+
+        # # we will force the accum_monthly rain if the month is the current month
+        # date = DateProcessor.parse_date(date) + relativedelta(day=1)
+
+        # now = datetime.now() + relativedelta(
+        #     day=1, hour=0, minute=0, second=0, microsecond=0
+        # )
+
+        # # check if we are in the same month... if that's the case, force the parsers to check if the files
+        # # were updated in the server
+        # if now == date or force_download or not local_target.exists():
+        #     # store the old avoid update status
+        #     avoid_update = self.daily_parser.avoid_update
+        #     self.daily_parser.avoid_update = True  # False
+
+        #     file = self.accum_monthly_rain(
+        #         date=date,
+        #         local_folder=local_folder,
+        #         force_download=force_download,
+        #     )
+
+        #     # retrieve the avoid_update status
+        #     self.daily_parser.avoid_update = avoid_update
+
+        #     return file
+
+        # else:
+        #     return local_target
 
 
 class INPEParsers:

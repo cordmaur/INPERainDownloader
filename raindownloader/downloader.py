@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Union, List, Optional, Callable, Dict
 from datetime import datetime
 import logging
+from logging import handlers
 
 import geopandas as gpd
 import xarray as xr
@@ -48,8 +49,9 @@ class Downloader:
 
         # create the logger
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(log_level)
 
-        # if the logger doesn't have any handlers, set everything
+        # if the logger doesn't have any handlers, setup everything
         if not self.logger.hasHandlers():
             handler = Downloader.create_logger_handler(self.local_folder, log_level)
             self.logger.addHandler(handler)
@@ -57,6 +59,7 @@ class Downloader:
 
             for parser in self.parsers:
                 parser.logger.addHandler(handler)
+                parser.logger.setLevel(log_level)
 
         self.logger.info("Initializing the Downloader class")
 
@@ -83,7 +86,9 @@ class Downloader:
         logging.getLogger().handlers.clear()
 
         path = Path(folder)
-        file_handler = logging.FileHandler(path / "downloader.log")
+        file_handler = handlers.RotatingFileHandler(
+            path / "downloader.log", maxBytes=1024 * 1024, backupCount=5
+        )
         file_handler.setLevel(level)
         file_handler.setFormatter(
             logging.Formatter(
@@ -371,8 +376,8 @@ class Downloader:
             start_date=start_date, end_date=end_date
         )
 
-        # make sure the files are downloaded
-        self.get_files(dates=dates, datatype=datatype)
+        # # make sure the files are downloaded
+        # self.get_files(dates=dates, datatype=datatype)
 
         # then, create the cube
         cube = self._create_cube(
