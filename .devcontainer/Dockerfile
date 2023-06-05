@@ -1,5 +1,7 @@
-FROM cordmaur/raindownloader:v1
+FROM cordmaur/reporter_dev:v2
+# FROM cordmaur/reporter_dev:alpine-v2
 
+# RUN mkdir /workspaces
 
 # # Use an official GDAL image as the base image
 # FROM osgeo/gdal:ubuntu-small-latest

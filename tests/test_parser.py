@@ -15,8 +15,8 @@ class TestBaseParser:
         self.base_parser = BaseParser(  # pylint: disable=attribute-defined-outside-init
             datatype="test_data",
             root="test_root",
-            fn_creator=lambda dt: f"test_file_{dt.strftime('%Y-%m-%d')}.nc",
-            fl_creator=lambda dt: f"test_folder/{dt.strftime('%Y/%m')}/",
+            filename_fn=lambda dt: f"test_file_{dt.strftime('%Y-%m-%d')}.nc",
+            foldername_fn=lambda dt: f"test_folder/{dt.strftime('%Y/%m')}/",
             date_freq=DateFrequency.DAILY,
             ftp=MagicMock(),
             avoid_update=True,

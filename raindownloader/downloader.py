@@ -4,15 +4,15 @@ Module with specialized classes to understand the INPE FTP Structure
 
 from pathlib import Path
 from enum import Enum
-from typing import Union, List, Optional, Callable, Dict
-from datetime import datetime
+from typing import Union, List, Optional, Callable
+from datetime import datetime, timedelta
 import logging
 from logging import handlers
 
 import geopandas as gpd
 import xarray as xr
 
-from .utils import FTPUtil, OSUtil
+from .utils import FTPUtil, OSUtil, DateProcessor
 from .inpeparser import INPETypes
 from .parser import BaseParser
 
@@ -26,7 +26,6 @@ class Downloader:
         parsers: List[BaseParser],
         local_folder: Union[str, Path],
         avoid_update: bool = True,
-        post_processors: Optional[Dict[str, Callable]] = None,
         log_level: int = logging.INFO,
     ) -> None:
         """
@@ -47,30 +46,42 @@ class Downloader:
         self.local_folder = Path(local_folder)
         self.avoid_update = avoid_update
 
-        # create the logger
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(log_level)
-
-        # if the logger doesn't have any handlers, setup everything
-        if not self.logger.hasHandlers():
-            handler = Downloader.create_logger_handler(self.local_folder, log_level)
-            self.logger.addHandler(handler)
-            self.ftp.logger.addHandler(handler)
-
-            for parser in self.parsers:
-                parser.logger.addHandler(handler)
-                parser.logger.setLevel(log_level)
+        self.logger = self.init_logger(log_level)
 
         self.logger.info("Initializing the Downloader class")
-
-        # functions to be applied to filetypes after they are loaded
-        self.post_processors = {} if post_processors is None else post_processors
 
         # update the parsers with global configs
         for parser in self.parsers:
             parser.ftp = self.ftp
             parser.avoid_update = self.avoid_update
             parser.clean_local_folder(local_folder=local_folder)
+
+    def init_logger(self, log_level: int):
+        """Initialize the loggers (downloader and parsers)"""
+
+        # create the logger
+        logger = logging.getLogger(__name__)
+        logger.setLevel(log_level)
+
+        # if the logger doesn't have any handlers, setup everything
+        if logger.hasHandlers():
+            logger.handlers.clear()
+        handler = Downloader.create_logger_handler(self.local_folder, log_level)
+        logger.addHandler(handler)
+
+        # setup FTP logger
+        if self.ftp.logger.hasHandlers():
+            self.ftp.logger.handlers.clear()
+        self.ftp.logger.addHandler(handler)
+
+        # setup parser loggers
+        for parser in self.parsers:
+            if parser.logger.hasHandlers():
+                parser.logger.handlers.clear()
+            parser.logger.addHandler(handler)
+            parser.logger.setLevel(log_level)
+
+        return logger
 
     @staticmethod
     def create_logger_handler(folder: Union[str, Path], level: int):
@@ -226,23 +237,20 @@ class Downloader:
         )
         return [self.remote_file_path(date, datatype=datatype) for date in dates]
 
-    def download_file(
-        self,
-        date: str,
-        datatype: Union[Enum, str],
-    ) -> Path:
+    def download_file(self, date: str, datatype: Union[Enum, str], **kwargs) -> Path:
         """
         Download a file from the FTP server to the a local folder. The filename and ftp location
         folder filename will be obtained from the respective parsers.
         """
         parser = self.get_parser(datatype=datatype)
-        return parser.download_file(date=date, local_folder=self.local_folder)
+        return parser.download_file(date=date, local_folder=self.local_folder, **kwargs)
 
     def get_file(
         self,
         date: Union[str, datetime],
         datatype: Union[Enum, str],
         force_download: bool = False,
+        **kwargs,
     ) -> Path:
         """
         Get a specific file. If it is not available locally, download it just in time.
@@ -254,6 +262,7 @@ class Downloader:
             date=date,
             local_folder=self.local_folder,
             force_download=force_download,
+            **kwargs,
         )
 
     def get_files(
@@ -261,6 +270,7 @@ class Downloader:
         dates: List[str],
         datatype: Union[Enum, str],
         force_download: bool = False,
+        **kwargs,
     ) -> List[Path]:
         """
         Download files from a list of dates and receives a list pointing to the files.
@@ -268,7 +278,10 @@ class Downloader:
         """
         parser = self.get_parser(datatype=datatype)
         return parser.get_files(
-            dates=dates, local_folder=self.local_folder, force_download=force_download
+            dates=dates,
+            local_folder=self.local_folder,
+            force_download=force_download,
+            **kwargs,
         )
 
     def get_range(
@@ -277,6 +290,7 @@ class Downloader:
         end_date: str,
         datatype: Union[Enum, str],
         force_download: bool = False,
+        **kwargs,
     ) -> List[Path]:
         """
         Download a range of files from start to end dates and receives a list pointing to the files.
@@ -289,6 +303,7 @@ class Downloader:
             end_date=end_date,
             local_folder=self.local_folder,
             force_download=force_download,
+            **kwargs,
         )
 
     def open_file(
@@ -297,6 +312,7 @@ class Downloader:
         datatype: Union[Enum, str],
         force_download: bool = False,
         return_array: bool = True,
+        **kwargs,
     ) -> Union[xr.Dataset, xr.DataArray]:
         """
         Open a file and apply the post processing, if existent.
@@ -308,16 +324,11 @@ class Downloader:
 
         # get the file
         file = self.get_file(
-            date=date_str, datatype=datatype, force_download=force_download
+            date=date_str, datatype=datatype, force_download=force_download, **kwargs
         )
 
         # open the file as is
         dset = xr.open_dataset(file)
-
-        # apply processing based on the file suffix
-        file_format = Path(file).suffix
-        if file_format in self.post_processors:
-            dset = self.post_processors[file_format](dset)
 
         # get the parser to check if there is a post processing associated with it
         parser = self.get_parser(datatype=datatype)
@@ -339,6 +350,7 @@ class Downloader:
         datatype: Union[Enum, str],
         dim_key: Optional[str] = "time",
         force_download: bool = False,
+        **kwargs,
     ) -> xr.DataArray:
         """
         Stack the images in the list as one XARRAY Dataset cube.
@@ -349,7 +361,7 @@ class Downloader:
 
         # create a cube with the files
         data_arrays = [
-            self.open_file(date, datatype, force_download).astype("float32")
+            self.open_file(date, datatype, force_download, **kwargs).astype("float32")
             for date in dates
         ]
 
@@ -364,6 +376,7 @@ class Downloader:
         datatype: Union[Enum, str],
         dim_key: Optional[str] = "time",
         force_download: bool = False,
+        **kwargs,
     ) -> xr.DataArray:
         """Create a cube from the range and apply the post_processor of the downloader"""
 
@@ -376,16 +389,55 @@ class Downloader:
             start_date=start_date, end_date=end_date
         )
 
-        # # make sure the files are downloaded
-        # self.get_files(dates=dates, datatype=datatype)
-
         # then, create the cube
         cube = self._create_cube(
             dates=dates,
             datatype=datatype,
             dim_key=dim_key,
             force_download=force_download,
+            **kwargs,
         )
+
+        return cube
+
+    def create_forecast_cube(
+        self,
+        start_date: str,
+        end_date: str,
+        dim_key: Optional[str] = "time",
+        forecast_lag: int = 7,
+    ) -> xr.DataArray:
+        """Create a cube from the range and apply the post_processor of the downloader"""
+
+        self.logger.info(
+            "Creating daily forecast cube from %s to %s (forecast_lag=%s)",
+            start_date,
+            end_date,
+            forecast_lag,
+        )
+
+        # first, let's grab the desired dates
+        dates = self.get_parser(INPETypes.DAILY_WRF).dates_range(
+            start_date=start_date, end_date=end_date
+        )
+
+        timelag = timedelta(days=forecast_lag)
+        lagged_dates = [
+            DateProcessor.normalize_date(DateProcessor.parse_date(date) - timelag)
+            for date in dates
+        ]
+        # set the stacked dimension name
+        dim = "time" if dim_key is None else dim_key
+
+        # create a cube with the files
+        data_arrays = [
+            self.open_file(
+                date, INPETypes.DAILY_WRF, False, ref_date=lagged_date
+            ).astype("float32")
+            for date, lagged_date in zip(dates, lagged_dates)
+        ]
+
+        cube = xr.concat(data_arrays, dim=dim)  # type: ignore
 
         return cube
 
@@ -393,7 +445,7 @@ class Downloader:
         self,
         start_date: str,
         end_date: str,
-        data_type: INPETypes,
+        datatype: INPETypes,
         force_download: bool = False,
     ) -> xr.DataArray:
         """Accumulate the rain in the given period"""
@@ -402,9 +454,9 @@ class Downloader:
         cube = self.create_cube(
             start_date=start_date,
             end_date=end_date,
-            datatype=data_type,
+            datatype=datatype,
             force_download=force_download,
-        )[data_type.value["var"]]
+        )
 
         dset = cube.sum(dim="time")
         dset = dset.assign_coords({"time": cube.time[0].values})
@@ -421,7 +473,7 @@ class Downloader:
             self.accum_rain(
                 start_date=start,
                 end_date=end,
-                data_type=data_type,
+                datatype=data_type,
                 force_download=force_download,
             )
             for start, end in periods

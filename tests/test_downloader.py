@@ -29,7 +29,6 @@ class TestDownloader:
         server=INPEParsers.FTPurl,
         parsers=INPEParsers.parsers,
         local_folder="./tests/data",
-        post_processors=INPEParsers.post_processors,
     )
 
     @patch("raindownloader.downloader.FTPUtil")
@@ -41,7 +40,6 @@ class TestDownloader:
             parsers=INPEParsers.parsers,
             local_folder="tests/data",
             avoid_update=True,
-            post_processors=None,
         )
 
         # assert instance variables
@@ -49,7 +47,6 @@ class TestDownloader:
         assert isinstance(downloader.parsers, list)
         assert isinstance(downloader.local_folder, Path)
         assert isinstance(downloader.avoid_update, bool)
-        assert isinstance(downloader.post_processors, dict)
 
         # assert parsers initialization
         for parser in downloader.parsers:

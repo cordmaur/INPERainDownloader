@@ -2,7 +2,6 @@
 Module with specialized classes to understand the INPE FTP Structure
 The idea is to have several classes that implement the following interface:
 remote_file_path(date: str)
-
 """
 import os
 
@@ -12,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional, Union
 
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 
 import matplotlib.colors as colors
@@ -20,7 +19,7 @@ import matplotlib.colors as colors
 import xarray as xr
 
 from .parser import BaseParser
-from .utils import DateProcessor, DateFrequency, FTPUtil, GISUtil
+from .utils import DateProcessor, DateFrequency, FTPUtil, GISUtil, OSUtil
 
 
 class INPETypes(Enum):
@@ -32,6 +31,8 @@ class INPETypes(Enum):
     MONTHLY_ACCUM = {"id": auto(), "var": "precacum"}
     MONTHLY_ACCUM_MANUAL = {"id": auto(), "var": "monthacum"}
     YEARLY_ACCUM = {"id": auto(), "var": "pacum"}
+    HOURLY_WRF = {"id": auto(), "var": "unknown"}
+    DAILY_WRF = {"id": auto(), "var": "forecast"}
 
 
 class INPE:
@@ -100,17 +101,20 @@ class INPE:
         return f"MERGE_CPTEC_acum_{date.year}.nc"
 
     @staticmethod
-    def yearly_post_proc(dset: xr.Dataset, date_str, **kwargs) -> xr.Dataset:
+    def yearly_post_proc(dset: xr.Dataset, date_str, **_) -> xr.Dataset:
         """Adjust the time for the dataset"""
-        date = DateProcessor.parse_date(date_str)
 
+        # first, perform the same adjust for all NCs
+        dset = INPE.nc_post_proc(dset)
+
+        date = DateProcessor.parse_date(date_str)
         # fix month and day as 1
         date = date + relativedelta(day=1, month=1)
 
         return dset.assign_coords({"time": [date]})
 
     @staticmethod
-    def grib2_post_proc(dset: xr.Dataset) -> xr.Dataset:
+    def grib2_post_proc(dset: xr.Dataset, **_) -> xr.Dataset:
         """Adjust the longitude in INPE's grib2 files and sets the CRS"""
 
         dset = dset.assign_coords({"longitude": dset.longitude - 360})
@@ -118,7 +122,7 @@ class INPE:
         return dset
 
     @staticmethod
-    def nc_post_proc(dset: xr.Dataset) -> xr.Dataset:
+    def nc_post_proc(dset: xr.Dataset, **_) -> xr.Dataset:
         """Adjust variable names in the netCDF files and set CRS"""
         if "lon" in dset.dims:
             dset = dset.rename_dims({"lon": "longitude", "lat": "latitude"})
@@ -128,6 +132,33 @@ class INPE:
 
         return dset
 
+    @staticmethod
+    def WRF_foldername(date: datetime, **kwargs) -> str:  # pylint: disable=invalid-name
+        """
+        Given a date that can be parsed by dateutil, create the structure of the WRF files
+        E.g., 2023/05/22/00
+        """
+        date = DateProcessor.parse_date(kwargs["ref_date"])
+        year = str(date.year)
+        month = str(date.month).zfill(2)
+        day = str(date.day).zfill(2)
+
+        return "/".join([year, month, day, "00"])
+
+    @staticmethod
+    def WRF_filename(  # pylint: disable=invalid-name
+        date: datetime, ref_date: Union[str, datetime]
+    ) -> str:
+        """
+        WRF Hourly Filename - Create the filename fot the Hourly Forecast from WRF/INPE
+            E.g.: WRF_cpt_07KM_2023052200_2023052312.grib2
+        """
+        date1 = DateProcessor.normalize_date(ref_date) + "00"
+
+        date2 = DateProcessor.parse_date(date)
+        date2 = DateProcessor.pretty_date(date2, "%Y%m%d%H")
+        return f"WRF_cpt_07KM_{date1}_{date2}.grib2"
+
 
 class MonthAccumParser(BaseParser):
     """Docstring"""
@@ -135,7 +166,6 @@ class MonthAccumParser(BaseParser):
     def __init__(
         self,
         datatype: Union[Enum, str],
-        root: str,
         fn_creator: Callable,
         daily_parser: BaseParser,
         fl_creator: Optional[Callable] = None,
@@ -145,9 +175,9 @@ class MonthAccumParser(BaseParser):
     ):
         super().__init__(
             datatype=datatype,
-            root=root,
-            fn_creator=fn_creator,
-            fl_creator=fl_creator,
+            root="",
+            filename_fn=fn_creator,
+            foldername_fn=fl_creator,
             date_freq=date_freq,
             ftp=ftp,
             avoid_update=avoid_update,
@@ -444,6 +474,152 @@ class MonthAccumParser(BaseParser):
         #     return local_target
 
 
+class HourlyWRFParser(BaseParser):
+    """Docstring"""
+
+    def download_file(
+        self,
+        date: Union[str, datetime],
+        local_folder: Union[str, Path],
+        ref_date: Union[str, datetime],
+    ) -> Path:
+        """Instead of downloading a specific hour, we have to actually calculate it"""
+        # convert the date to datetime
+        date = DateProcessor.parse_date(date)
+
+        # download this specific date/hour
+        file1 = super().download_file(
+            date, local_folder=local_folder, ref_date=ref_date
+        )
+
+        # download the previous hour
+        prev_date = date - timedelta(hours=1)
+        tmp_folder = Path(local_folder) / "tmp"
+        if not tmp_folder.exists():
+            tmp_folder.mkdir(parents=True, exist_ok=True)
+        file2 = super().download_file(
+            prev_date, local_folder=tmp_folder, ref_date=ref_date
+        )
+
+        # open both files and subtract file1 - file2
+        dset1 = xr.open_dataset(file1)
+        dset2 = xr.open_dataset(file2)
+        dset = dset1 - dset2
+
+        # save the hourly rain to disk and delete the temporary
+        dset.attrs["updated"] = str(datetime.now())
+
+        dset = dset.assign_coords({"longitude": dset.longitude - 360})
+        dset = dset.rio.write_crs("epsg:4326")
+
+        # close the datasets and clear the temp folder
+        dset.to_netcdf(file1)
+
+        dset1.close()
+        dset2.close()
+        OSUtil.clear_folder(tmp_folder)
+
+        return file1
+
+
+class DailyWRFParser(BaseParser):
+    """Docstring"""
+
+    @staticmethod
+    def _foldername_fn(_: datetime, **kwargs) -> str:
+        """Create a foldername for the local storage"""
+        return DateProcessor.normalize_date(kwargs["ref_date"])
+
+    @staticmethod
+    def _filename_fn(date: datetime, ref_date: Union[str, datetime]) -> str:
+        """Create the filename for local storage"""
+        date1 = DateProcessor.normalize_date(ref_date)
+        date2 = DateProcessor.normalize_date(date)
+        return f"WRF_{date1}_{date2}.grib2"
+
+    def __init__(
+        self,
+        datatype: Union[Enum, str],
+        root: str,
+        hourly_parser: BaseParser,
+        ftp: Optional[FTPUtil] = None,
+        avoid_update: bool = True,
+    ):
+        super().__init__(
+            datatype=datatype,
+            root=root,
+            filename_fn=DailyWRFParser._filename_fn,
+            foldername_fn=DailyWRFParser._foldername_fn,
+            date_freq=DateFrequency.DAILY,
+            ftp=ftp,
+            avoid_update=avoid_update,
+            mirror_folder=True,
+        )
+
+        self.hourly_parser = hourly_parser
+
+        if ftp is not None:
+            self.hourly_parser.ftp = ftp
+
+    def download_file(
+        self,
+        date: Union[str, datetime],
+        local_folder: Union[str, Path],
+        ref_date: Union[str, datetime],
+    ):
+        """Actually this function performs as accum_monthly_rain"""
+        # accumulate the daily forecast
+        return self.accum_daily_forecast(
+            date=date, local_folder=local_folder, force_download=True, ref_date=ref_date
+        )
+
+    def accum_daily_forecast(
+        self,
+        date: Union[str, datetime],
+        ref_date: Union[str, datetime],
+        local_folder: Union[str, Path],
+        force_download: bool = False,
+    ):
+        """Docstring"""
+
+        ### create a CUBE with the hourly forecast in the given date
+        # get the hourly dates to process
+        date = DateProcessor.parse_date(date).replace(hour=12, minute=0, second=0)
+
+        files = self.hourly_parser.get_range(
+            start_date=date - timedelta(hours=23),
+            end_date=date,
+            local_folder=local_folder,
+            force_download=force_download,
+            ref_date=ref_date,
+        )
+
+        # create the cube and get the correct variable
+        cube = GISUtil.create_cube(files=files, dim_key="time")
+        if self.hourly_parser.post_proc:
+            cube = self.hourly_parser.post_proc(cube)
+
+        accum = cube[self.hourly_parser.varname].sum(dim="time")
+        accum = accum.rename(self.datatype.value["var"])  # type: ignore
+
+        # once the reduction is being done in the time dimension, create a new dimension for time
+        accum = accum.assign_coords({"time": date}).expand_dims(dim="time")
+
+        # save the file to disk
+        target_file = self.local_target(
+            date=date, local_folder=local_folder, ref_date=ref_date
+        )
+        dset = accum.to_dataset()
+
+        # update the creation date for this file
+        dset.attrs["updated"] = str(datetime.now())
+
+        dset.to_netcdf(target_file)
+
+        # return self.local_path(date=date)
+        return target_file
+
+
 class INPEParsers:
     """Just a structure to store the parsers for the INPE FTP"""
 
@@ -452,34 +628,37 @@ class INPEParsers:
     daily_rain_parser = BaseParser(
         datatype=INPETypes.DAILY_RAIN,
         root="/modelos/tempo/MERGE/GPM/DAILY/",
-        fn_creator=INPE.MERGE_filename,
-        fl_creator=INPE.MERGE_structure,
+        filename_fn=INPE.MERGE_filename,
+        foldername_fn=INPE.MERGE_structure,
+        post_proc=INPE.grib2_post_proc,
     )
 
     monthly_accum_yearly = BaseParser(
         datatype=INPETypes.MONTHLY_ACCUM_YEARLY,
         root="modelos/tempo/MERGE/GPM/CLIMATOLOGY/MONTHLY_ACCUMULATED_YEARLY/",
-        fn_creator=INPE.MERGE_MAY_filename,
+        filename_fn=INPE.MERGE_MAY_filename,
         date_freq=DateFrequency.MONTHLY,
+        post_proc=INPE.nc_post_proc,
     )
 
     daily_average = BaseParser(
         datatype=INPETypes.DAILY_AVERAGE,
         root="/modelos/tempo/MERGE/GPM/CLIMATOLOGY/DAILY_AVERAGE",
-        fn_creator=INPE.MERGE_DA_filename,
+        filename_fn=INPE.MERGE_DA_filename,
         date_freq=DateFrequency.DAILY,
+        post_proc=INPE.nc_post_proc,
     )
 
     monthly_accum = BaseParser(
         datatype=INPETypes.MONTHLY_ACCUM,
         root="/modelos/tempo/MERGE/GPM/CLIMATOLOGY/MONTHLY_ACCUMULATED/",
-        fn_creator=INPE.MERGE_MA_filename,
+        filename_fn=INPE.MERGE_MA_filename,
         date_freq=DateFrequency.MONTHLY,
+        post_proc=INPE.nc_post_proc,
     )
 
     month_accum_manual = MonthAccumParser(
         datatype=INPETypes.MONTHLY_ACCUM_MANUAL,
-        root="",
         fn_creator=INPE.MERGE_MAY_filename,
         date_freq=DateFrequency.MONTHLY,
         daily_parser=daily_rain_parser,
@@ -488,9 +667,24 @@ class INPEParsers:
     year_accum = BaseParser(
         datatype=INPETypes.YEARLY_ACCUM,
         root="/modelos/tempo/MERGE/GPM/CLIMATOLOGY/YEAR_ACCUMULATED",
-        fn_creator=INPE.MERGE_YA_filename,
+        filename_fn=INPE.MERGE_YA_filename,
         date_freq=DateFrequency.YEARLY,
         post_proc=INPE.yearly_post_proc,
+    )
+
+    hourly_wrf = HourlyWRFParser(
+        datatype=INPETypes.HOURLY_WRF,
+        root="/modelos/tempo/WRF/ams_07km/recortes/prec/",
+        filename_fn=INPE.WRF_filename,
+        foldername_fn=INPE.WRF_foldername,
+        mirror_folder=True,
+        date_freq=DateFrequency.HOURLY,
+    )
+
+    daily_wrf = DailyWRFParser(
+        datatype=INPETypes.DAILY_WRF,
+        root="/modelos/tempo/WRF/ams_07km/recortes/prec/",
+        hourly_parser=hourly_wrf,
     )
 
     parsers = [
@@ -500,6 +694,8 @@ class INPEParsers:
         monthly_accum,
         month_accum_manual,
         year_accum,
+        hourly_wrf,
+        daily_wrf,
     ]
 
-    post_processors = {".grib2": INPE.grib2_post_proc, ".nc": INPE.nc_post_proc}
+    # post_processors = {".grib2": INPE.grib2_post_proc, ".nc": INPE.nc_post_proc}

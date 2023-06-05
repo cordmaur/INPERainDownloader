@@ -1,8 +1,9 @@
 """
 Module with several utils used in raindownloader INPEraindownloader package
 """
-import ftplib
 import os
+import subprocess
+import ftplib
 from pathlib import Path
 from typing import Union, List, Optional, Tuple
 from enum import Enum
@@ -26,6 +27,7 @@ class DateFrequency(Enum):
     DAILY = {"days": 1}
     MONTHLY = {"months": 1}
     YEARLY = {"years": 1}
+    HOURLY = {"hours": 1}
 
 
 class DateProcessor:
@@ -72,7 +74,11 @@ class DateProcessor:
         # looop through the dates
         dates = []
         while current_date <= final_date:
-            dates.append(DateProcessor.normalize_date(current_date))
+            if date_freq == DateFrequency.HOURLY:
+                dates.append(DateProcessor.pretty_date(current_date, "%Y%m%dT%H%M%S"))
+            else:
+                dates.append(DateProcessor.normalize_date(current_date))
+
             current_date += step
 
         return dates
@@ -310,6 +316,10 @@ class GISUtil:
 
         cube = xr.concat(data_arrays, dim=dim)
 
+        # close the arrays
+        for array in data_arrays:
+            array.close()
+
         return cube
 
     @staticmethod
@@ -375,3 +385,10 @@ class OSUtil:
         local_dt = datetime.datetime.fromtimestamp(stat.st_mtime)
 
         return {"datetime": local_dt, "size": stat.st_size}
+
+    @staticmethod
+    def clear_folder(folder_path: Union[str, Path]):
+        """Clear the given folder"""
+        folder_path = Path(folder_path).as_posix()
+        command = f"rm -rf {folder_path}/*"
+        subprocess.run(command, shell=True, check=True)
