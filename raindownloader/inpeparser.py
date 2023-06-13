@@ -31,7 +31,7 @@ class INPETypes(Enum):
     MONTHLY_ACCUM = {"id": auto(), "var": "precacum"}
     MONTHLY_ACCUM_MANUAL = {"id": auto(), "var": "monthacum"}
     YEARLY_ACCUM = {"id": auto(), "var": "pacum"}
-    HOURLY_WRF = {"id": auto(), "var": "unknown"}
+    HOURLY_WRF = {"id": auto(), "var": "hour_wrf"}
     DAILY_WRF = {"id": auto(), "var": "forecast"}
 
 
@@ -509,11 +509,14 @@ class HourlyWRFParser(BaseParser):
         # save the hourly rain to disk and delete the temporary
         dset.attrs["updated"] = str(datetime.now())
 
+        dset = dset.rename_vars({"unknown": "hour_wrf"})
         dset = dset.assign_coords({"longitude": dset.longitude - 360})
         dset = dset.rio.write_crs("epsg:4326")
 
         # close the datasets and clear the temp folder
         dset.to_netcdf(file1)
+        # file1 = file1.with_suffix(".tif")
+        # dset.to_array().squeeze().rio.to_raster(file1)
 
         dset1.close()
         dset2.close()
@@ -544,6 +547,7 @@ class DailyWRFParser(BaseParser):
         hourly_parser: BaseParser,
         ftp: Optional[FTPUtil] = None,
         avoid_update: bool = True,
+        post_proc: Optional[Callable] = None,
     ):
         super().__init__(
             datatype=datatype,
@@ -554,6 +558,7 @@ class DailyWRFParser(BaseParser):
             ftp=ftp,
             avoid_update=avoid_update,
             mirror_folder=True,
+            post_proc=post_proc,
         )
 
         self.hourly_parser = hourly_parser
@@ -679,12 +684,14 @@ class INPEParsers:
         foldername_fn=INPE.WRF_foldername,
         mirror_folder=True,
         date_freq=DateFrequency.HOURLY,
+        post_proc=lambda x, **_: x.rio.write_crs("epsg:4326"),
     )
 
     daily_wrf = DailyWRFParser(
         datatype=INPETypes.DAILY_WRF,
         root="/modelos/tempo/WRF/ams_07km/recortes/prec/",
         hourly_parser=hourly_wrf,
+        post_proc=lambda x, **_: x.rio.write_crs("epsg:4326"),
     )
 
     parsers = [

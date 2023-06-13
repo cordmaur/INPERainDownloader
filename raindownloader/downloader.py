@@ -371,8 +371,8 @@ class Downloader:
 
     def create_cube(
         self,
-        start_date: str,
-        end_date: str,
+        start_date: Union[str, datetime],
+        end_date: Union[str, datetime],
         datatype: Union[Enum, str],
         dim_key: Optional[str] = "time",
         force_download: bool = False,
