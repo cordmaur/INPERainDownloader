@@ -237,7 +237,9 @@ class Downloader:
         )
         return [self.remote_file_path(date, datatype=datatype) for date in dates]
 
-    def download_file(self, date: str, datatype: Union[Enum, str], **kwargs) -> Path:
+    def download_file(
+        self, date: Union[str, datetime], datatype: Union[Enum, str], **kwargs
+    ) -> Path:
         """
         Download a file from the FTP server to the a local folder. The filename and ftp location
         folder filename will be obtained from the respective parsers.
