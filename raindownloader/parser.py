@@ -7,7 +7,7 @@ The parser module defines the template of a Parser Class.
 import os
 from pathlib import Path
 from enum import Enum
-from typing import Callable, Optional, Union, List
+from typing import Callable, Optional, Union, List, Iterable
 from datetime import datetime
 import logging
 
@@ -266,7 +266,7 @@ class BaseParser:
 
     def get_files(
         self,
-        dates: List[str],
+        dates: Iterable[Union[str, datetime]],
         local_folder: Union[str, Path],
         force_download: bool = False,
         **kwargs,

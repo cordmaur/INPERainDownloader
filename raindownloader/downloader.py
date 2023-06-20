@@ -4,7 +4,7 @@ Module with specialized classes to understand the INPE FTP Structure
 
 from pathlib import Path
 from enum import Enum
-from typing import Union, List, Optional, Callable
+from typing import Union, List, Optional, Callable, Iterable
 from datetime import datetime, timedelta
 import logging
 from logging import handlers
@@ -269,7 +269,7 @@ class Downloader:
 
     def get_files(
         self,
-        dates: List[str],
+        dates: Iterable[Union[str, datetime]],
         datatype: Union[Enum, str],
         force_download: bool = False,
         **kwargs,
