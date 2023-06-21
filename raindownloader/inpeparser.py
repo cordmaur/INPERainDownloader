@@ -8,7 +8,7 @@ import os
 # from abc import ABC, abstractmethod
 from enum import Enum, auto
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Union, List
 
 import calendar
 from datetime import datetime, timedelta
@@ -33,6 +33,26 @@ class INPETypes(Enum):
     YEARLY_ACCUM = {"id": auto(), "var": "pacum"}
     HOURLY_WRF = {"id": auto(), "var": "hour_wrf"}
     DAILY_WRF = {"id": auto(), "var": "forecast"}
+
+    @classmethod
+    def from_name(cls, name_str):
+        """Get enum member from its name"""
+        try:
+            return cls[name_str]
+
+        except KeyError as exc:
+            raise ValueError(f"Unknown name: {name_str}") from exc
+            # raise ValueError(f"Unknown name: {name_str}")
+
+    @classmethod
+    def types(cls, as_string=True) -> Union[List[str], str]:
+        """Return available types in str format"""
+        lst = [inpe_type.name for inpe_type in cls]
+
+        if as_string:
+            return ", ".join(inpe_type.name for inpe_type in cls)
+        else:
+            return lst
 
 
 class INPE:

@@ -133,6 +133,10 @@ class Downloader:
         keep_dim: str = "time",  # specify the dimension along with we will retrieve the TS
     ):
         """Get a time series of values within the shape, given a reducer method"""
+        if cube.rio.crs != shp.crs:
+            print(f"Coverting shp CRS to {cube.rio.crs}")
+            shp = shp.to_crs(cube.rio.crs)  # type: ignore
+
         # clip to the desired area
         area = cube.rio.clip(shp.geometry)
 

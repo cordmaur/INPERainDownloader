@@ -6,6 +6,7 @@ __pycache__/
 tests/data/
 tmp/
 *.DS_Store
+config.ini
 
 # C extensions
 *.so 

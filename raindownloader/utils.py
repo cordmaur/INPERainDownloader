@@ -1,7 +1,7 @@
 """
 Module with several utils used in raindownloader INPEraindownloader package
 """
-import os
+import os, io
 import subprocess
 import ftplib
 from pathlib import Path
@@ -16,9 +16,13 @@ import calendar
 from dateutil import parser
 from dateutil.relativedelta import relativedelta
 
+from PIL import Image
+import matplotlib.pyplot as plt
+
 import rasterio as rio
 import xarray as xr
 import rioxarray as xrio
+import geopandas as gpd
 
 
 class DateFrequency(Enum):
@@ -69,7 +73,7 @@ class DateProcessor:
         final_date = DateProcessor.parse_date(end_date)
 
         # create the step to be applied to the current date
-        step = relativedelta(**date_freq.value)
+        step = relativedelta(**date_freq.value)  # type: ignore
 
         # looop through the dates
         dates = []
@@ -323,6 +327,22 @@ class GISUtil:
         return cube
 
     @staticmethod
+    def cut_cube_by_geoms(
+        cube: xr.DataArray, geometries: gpd.GeoSeries
+    ) -> xr.DataArray:
+        """
+        Calculate the cube inside the given geometries in the GeoDataFrame.
+        The geometries are stored in a GeoSeries from Pandas
+        """
+        # first make sure we have the same CRS
+        geometries = geometries.to_crs(cube.rio.crs)
+
+        # Let's use clip to ignore data outide the geometry
+        clipped = cube.rio.clip(geometries)
+
+        return clipped
+
+    @staticmethod
     def profile_from_xarray(array: xr.DataArray, driver: Optional[str] = "GTiff"):
         """Create a rasterio profile given an rioxarray"""
         profile = dict(
@@ -370,6 +390,38 @@ class GISUtil:
         grib["prec"].rio.to_raster(filename, compress="deflate")
 
         return filename
+
+    @staticmethod
+    def animate_cube(
+        cube: xr.DataArray,
+        filename: str,
+        shp: Optional[gpd.GeoDataFrame] = None,
+        **kwargs,
+    ):
+        """Create an animated gif from the cube"""
+
+        # create a memory buffer and a list of images to store each frame
+        images = []
+        buf = io.BytesIO()
+
+        # if a shapefile is given, cut the cube accordingly
+
+        # loop through the "time" dimension from the cube
+        for i, time in enumerate(cube.time.to_numpy()):
+            # begin by creating a figure
+            print(f"Appending: {time}")
+            fig, ax = plt.subplots(num=1)
+
+            cube.sel(time=time).plot(ax=ax, **kwargs)  # type: ignore
+
+            # use a file-like object as buffer (to avoid saving images to disk)
+            fig.savefig(buf, format="png")
+            buf.seek(0)
+
+            images.append(Image.open(buf))
+
+            fig.clear()
+            ax.clear()
 
 
 class OSUtil:
