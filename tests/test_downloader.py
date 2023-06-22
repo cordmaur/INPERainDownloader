@@ -7,6 +7,7 @@ import pytest
 
 from raindownloader.downloader import Downloader
 from raindownloader.inpeparser import INPEParsers, INPETypes
+from raindownloader.utils import GISUtil
 
 
 class TestDownloader:
@@ -61,7 +62,7 @@ class TestDownloader:
         mock_geoms = MagicMock()
 
         # call the method
-        Downloader.cut_cube_by_geoms(mock_cube, mock_geoms)
+        GISUtil.cut_cube_by_geoms(mock_cube, mock_geoms)
 
         # assert calls were done correctly
         assert mock_geoms.to_crs.called

@@ -1,7 +1,8 @@
 """
 Module with several utils used in raindownloader INPEraindownloader package
 """
-import os, io
+import os
+import io
 import subprocess
 import ftplib
 from pathlib import Path
@@ -19,19 +20,15 @@ from dateutil.relativedelta import relativedelta
 from PIL import Image
 import matplotlib.pyplot as plt
 
+import pandas as pd
+
+from shapely import box
 import rasterio as rio
 import xarray as xr
 import rioxarray as xrio
 import geopandas as gpd
 
-
-class DateFrequency(Enum):
-    """Specifies date frequency for the products"""
-
-    DAILY = {"days": 1}
-    MONTHLY = {"months": 1}
-    YEARLY = {"years": 1}
-    HOURLY = {"hours": 1}
+from .enums import INPETypes, DateFrequency, FileType
 
 
 class DateProcessor:
@@ -162,14 +159,6 @@ class DateProcessor:
         return now + relativedelta(hour=0, minute=0, second=0, microsecond=0)
 
 
-class FileType(Enum):
-    """Specifies the file types for downloading"""
-
-    GRIB = ".grib2"
-    GEOTIFF = ".tif"
-    NETCDF = ".nc"
-
-
 class FTPUtil:
     """FTP helper class to download file preserving timestamp and to get file info, among others"""
 
@@ -292,6 +281,42 @@ class FTPUtil:
         )
 
 
+class ChartUtil:
+    @staticmethod
+    def save_bar(series: pd.Series, datatype: INPETypes, filename: str):
+        """Save a bar chart to a file"""
+
+        # check if the folder exists
+        file = Path(filename)
+
+        if not file.parent.exists():
+            raise FileNotFoundError(
+                f"Folder '{file.parent.absolute()}' does not exist."
+            )
+
+        axes = ChartUtil.bar_chart(series=series, datatype=datatype)
+
+        axes.figure.subplots_adjust(bottom=0.3)
+        axes.figure.savefig(file.with_suffix(".png").as_posix())
+
+    @staticmethod
+    def bar_chart(series: pd.Series, datatype: INPETypes) -> plt.Axes:
+        """Create a bar chart from a given series"""
+
+        # plot a graph
+        _, axes = plt.subplots(num=2)
+        axes.bar(x=series.index.strftime("%d-%m-%Y"), height=series.values)  # type: ignore
+
+        labels = axes.get_xticks()
+        axes.xaxis.set_major_locator(plt.FixedLocator(labels))  # type: ignore
+        axes.set_xticklabels(labels, rotation=90)
+
+        axes.set_ylabel("Precipitaion (mm)")
+        axes.set_title(datatype.value["name"])
+
+        return axes
+
+
 class GISUtil:
     """Helper class for basic GIS operations"""
 
@@ -327,6 +352,32 @@ class GISUtil:
         return cube
 
     @staticmethod
+    def bounds(
+        shp: gpd.GeoDataFrame,
+        percent_buffer: Optional[float] = None,
+        fixed_buffer: Optional[float] = None,
+    ) -> tuple:
+        """
+        Return the total bounds of a shape file with a given buffer
+        The buffer can be a fixed distance (in projection units)
+        or a percentage of the maximum size
+        """
+
+        # get the bounding box of the total shape
+        bbox = box(*shp.total_bounds)
+
+        if fixed_buffer is not None:
+            bbox = bbox.buffer(fixed_buffer)
+        elif percent_buffer is not None:
+            xmin, ymin, xmax, ymax = bbox.bounds
+            delta_x = xmax - xmin
+            delta_y = ymax - ymin
+            diag = (delta_x**2 + delta_y**2) ** 0.5
+            bbox = bbox.buffer(percent_buffer * diag)
+
+        return bbox.bounds
+
+    @staticmethod
     def cut_cube_by_geoms(
         cube: xr.DataArray, geometries: gpd.GeoSeries
     ) -> xr.DataArray:
@@ -341,6 +392,13 @@ class GISUtil:
         clipped = cube.rio.clip(geometries)
 
         return clipped
+
+    @staticmethod
+    def cut_cube_by_bounds(
+        cube: xr.DataArray, xmin: float, ymin: float, xmax: float, ymax: float
+    ):
+        """Cut the cube by the given bounds"""
+        return cube.sel(longitude=slice(xmin, xmax), latitude=slice(ymin, ymax))
 
     @staticmethod
     def profile_from_xarray(array: xr.DataArray, driver: Optional[str] = "GTiff"):
@@ -396,23 +454,40 @@ class GISUtil:
         cube: xr.DataArray,
         filename: str,
         shp: Optional[gpd.GeoDataFrame] = None,
+        max_quantile: float = 0.999,
+        frametime=25,
+        buffer_perc=0.1,
         **kwargs,
     ):
         """Create an animated gif from the cube"""
 
-        # create a memory buffer and a list of images to store each frame
+        # check if the filename folder exists
+        file = Path(filename)
+        if not file.parent.exists():
+            raise FileNotFoundError(f"Folder {file.parent.absolute()} does not exist")
+
+        # create a list of images to store each frame
         images = []
-        buf = io.BytesIO()
 
         # if a shapefile is given, cut the cube accordingly
+        if shp is not None:
+            bounds = GISUtil.bounds(shp=shp, percent_buffer=buffer_perc)
+            cube = GISUtil.cut_cube_by_bounds(cube, *bounds)
+
+        # after cutting the cube (if demanded) we can calculate vmax
+        vmax = cube.quantile(max_quantile)
 
         # loop through the "time" dimension from the cube
-        for i, time in enumerate(cube.time.to_numpy()):
+        for time in cube.time.to_numpy():
             # begin by creating a figure
             print(f"Appending: {time}")
-            fig, ax = plt.subplots(num=1)
+            buf = io.BytesIO()
+            fig, axes = plt.subplots(num=1)
 
-            cube.sel(time=time).plot(ax=ax, **kwargs)  # type: ignore
+            cube.sel(time=time).plot(ax=axes, vmax=vmax, **kwargs)  # type: ignore
+
+            if shp is not None:
+                shp.plot(ax=axes, edgecolor="firebrick", facecolor="none")
 
             # use a file-like object as buffer (to avoid saving images to disk)
             fig.savefig(buf, format="png")
@@ -421,7 +496,15 @@ class GISUtil:
             images.append(Image.open(buf))
 
             fig.clear()
-            ax.clear()
+            axes.clear()
+
+        images[0].save(
+            file.with_suffix(".gif"),
+            save_all=True,
+            append_images=images[1:],
+            duration=frametime * len(images),
+            loop=0,
+        )
 
 
 class OSUtil:

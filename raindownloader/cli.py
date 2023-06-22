@@ -3,15 +3,13 @@
 import argparse
 from configparser import ConfigParser
 from pathlib import Path
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
 import geopandas as gpd
 import xarray as xr
 
 from raindownloader.inpeparser import INPEParsers, INPETypes
 from raindownloader.downloader import Downloader
-from raindownloader.utils import DateProcessor
+from raindownloader.utils import DateProcessor, GISUtil, ChartUtil
 
 
 def reset(_):
@@ -104,6 +102,7 @@ def create_downloader() -> Downloader:
 
 def series(args):
     """Download a series"""
+
     dates = list(map(DateProcessor.pretty_date, args.dates))
     print(f"Downloading {args.type} series for range: {dates}")
 
@@ -115,42 +114,38 @@ def series(args):
         datatype=args.type,
     )
 
+    # Creating time-series
     if not args.shp:
         print("No shapefile provided. Evaluating rain for whole region (South America)")
         series_xr = cube.mean(dim=["latitude", "longitude"])
         series_pd = series_xr.to_series()
+        shp = None
+
     else:
         shp = gpd.read_file(args.shp)
 
         print(f"Cutting raster to: {args.shp}")
-
         series_pd = downloader.get_time_series(
             cube=cube, shp=shp, reducer=xr.DataArray.mean
         )
 
-        # create a thumbnail
-        fig, axes = plt.subplots(figsize=(10, 10))
-        cube_accum = cube.sum(dim="time")
-        cutted = cube_accum.rio.clip(shp.geometry)
-        cutted.plot(ax=axes)
-        shp.plot(ax=axes, facecolor="none", edgecolor="brown")
-        fig.savefig(args.file.with_suffix(".map.png"))
-        print(f"Map exported to: {args.file.with_suffix('.map.png')}")
-
+    # Now we have the series in a Pandas Series object
     # save to file
     series_pd.to_csv(args.file.with_suffix(".csv"))
     print(f"Series exported to: {args.file.with_suffix('.csv')}")
 
-    # plot a graph
-    fig, axes = plt.subplots()
-    axes.bar(x=series_pd.index.strftime("%d-%m-%Y"), height=series_pd.values)  # type: ignore
-    # series_pd.plot(axes=axes, kind="bar")
-    labels = axes.get_xticklabels()
-    axes.set_xticklabels(labels, rotation=90)
-    axes.set_ylabel("Precipitaion (mm)")
-    fig.subplots_adjust(bottom=0.3)
-    fig.savefig(args.file.with_suffix(".graph.png"))
-    print(f"Graph exported to: {args.file.with_suffix('.graph.png')}")
+    # if chart flag is True, plot a bar chart
+    if args.chart:
+        # create a thumbnail
+        print(f"Creating bar chart: {args.file.with_suffix('.png')}")
+        ChartUtil.save_bar(
+            series=series_pd, datatype=args.type, filename=args.file.with_suffix(".png")
+        )
+
+    # if animation flag is True, create a gif file
+    if args.anim:
+        print(f"Creating animation file: {args.file.with_suffix('.gif')}")
+        GISUtil.animate_cube(cube=cube, shp=shp, filename=args.file.with_suffix(".gif"))
 
 
 def download(args):
@@ -251,6 +246,18 @@ def main():
         required=True,
         help="Specifies the .csv file to save the series to",
         type=Path,
+    )
+    parser_series.add_argument(
+        "--chart",
+        action="store_true",
+        default=False,
+        help="Exports a chart (.png) with the series",
+    )
+    parser_series.add_argument(
+        "--anim",
+        action="store_true",
+        default=False,
+        help="Exports an animated GIF (.gif) with the series",
     )
     parser_series.set_defaults(func=series)
     # ------------------------------------------

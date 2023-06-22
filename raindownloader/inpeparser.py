@@ -19,40 +19,8 @@ import matplotlib.colors as colors
 import xarray as xr
 
 from .parser import BaseParser
-from .utils import DateProcessor, DateFrequency, FTPUtil, GISUtil, OSUtil
-
-
-class INPETypes(Enum):
-    """Data types available from INPE"""
-
-    DAILY_RAIN = {"id": auto(), "var": "prec"}
-    MONTHLY_ACCUM_YEARLY = {"id": auto(), "var": "pacum"}
-    DAILY_AVERAGE = {"id": auto(), "var": "pmed"}
-    MONTHLY_ACCUM = {"id": auto(), "var": "precacum"}
-    MONTHLY_ACCUM_MANUAL = {"id": auto(), "var": "monthacum"}
-    YEARLY_ACCUM = {"id": auto(), "var": "pacum"}
-    HOURLY_WRF = {"id": auto(), "var": "hour_wrf"}
-    DAILY_WRF = {"id": auto(), "var": "forecast"}
-
-    @classmethod
-    def from_name(cls, name_str):
-        """Get enum member from its name"""
-        try:
-            return cls[name_str]
-
-        except KeyError as exc:
-            raise ValueError(f"Unknown name: {name_str}") from exc
-            # raise ValueError(f"Unknown name: {name_str}")
-
-    @classmethod
-    def types(cls, as_string=True) -> Union[List[str], str]:
-        """Return available types in str format"""
-        lst = [inpe_type.name for inpe_type in cls]
-
-        if as_string:
-            return ", ".join(inpe_type.name for inpe_type in cls)
-        else:
-            return lst
+from .utils import DateProcessor, FTPUtil, GISUtil, OSUtil, INPETypes
+from .enums import DateFrequency, INPETypes
 
 
 class INPE:

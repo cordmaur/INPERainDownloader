@@ -13,7 +13,7 @@ import geopandas as gpd
 import xarray as xr
 
 from .utils import FTPUtil, OSUtil, DateProcessor
-from .inpeparser import INPETypes
+from .enums import INPETypes
 from .parser import BaseParser
 
 
@@ -108,22 +108,6 @@ class Downloader:
             )
         )
         return file_handler
-
-    @staticmethod
-    def cut_cube_by_geoms(
-        cube: xr.DataArray, geometries: gpd.GeoSeries
-    ) -> xr.DataArray:
-        """
-        Calculate the cube inside the given geometries in the GeoDataFrame.
-        The geometries are stored in a GeoSeries from Pandas
-        """
-        # first make sure we have the same CRS
-        geometries = geometries.to_crs(cube.rio.crs)
-
-        # Let's use clip to ignore data outide the geometry
-        clipped = cube.rio.clip(geometries)
-
-        return clipped
 
     @staticmethod
     def get_time_series(
